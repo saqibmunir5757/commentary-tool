@@ -17,6 +17,7 @@ import json
 import os
 import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 
 from config import OUTPUT_DIR, CLIPS_DIR, NORMALIZED_DIR
@@ -48,7 +49,7 @@ def _encoder_args():
     """Return encoder flags: VideoToolbox uses -q:v, libx264 uses -preset/-crf."""
     if HW_ENCODER == "h264_videotoolbox":
         return ["-c:v", "h264_videotoolbox", "-q:v", "65"]
-    return ["-c:v", "libx264", "-preset", "fast", "-crf", "23"]
+    return ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "23"]
 
 
 print(f"[video_assembler] Using encoder: {HW_ENCODER}")
@@ -71,24 +72,87 @@ def get_clip_duration(clip_path: str) -> float:
         return 0.0
 
 
+def _probe_format(clip_path: str) -> dict:
+    """Probe video/audio properties using ffprobe."""
+    info = {"width": 0, "height": 0, "fps": 0.0, "audio_rate": 0, "audio_channels": 0}
+    try:
+        # Video stream
+        cmd_v = [
+            FFPROBE_BIN, "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height,r_frame_rate",
+            "-of", "json", clip_path,
+        ]
+        r = subprocess.run(cmd_v, capture_output=True, text=True, timeout=10)
+        data = json.loads(r.stdout)
+        streams = data.get("streams", [])
+        if streams:
+            info["width"] = int(streams[0].get("width", 0))
+            info["height"] = int(streams[0].get("height", 0))
+            fps_str = streams[0].get("r_frame_rate", "0/1")
+            num, den = fps_str.split("/")
+            info["fps"] = float(num) / float(den) if float(den) > 0 else 0.0
+
+        # Audio stream
+        cmd_a = [
+            FFPROBE_BIN, "-v", "error",
+            "-select_streams", "a:0",
+            "-show_entries", "stream=sample_rate,channels",
+            "-of", "json", clip_path,
+        ]
+        r2 = subprocess.run(cmd_a, capture_output=True, text=True, timeout=10)
+        data2 = json.loads(r2.stdout)
+        streams2 = data2.get("streams", [])
+        if streams2:
+            info["audio_rate"] = int(streams2[0].get("sample_rate", 0))
+            info["audio_channels"] = int(streams2[0].get("channels", 0))
+    except Exception as e:
+        print(f"  probe error: {e}")
+    return info
+
+
 def normalize_clip(clip_path: str, output_path: str, target_fps: int = 30) -> Optional[str]:
-    """Re-encode clip to 1920x1080 letterboxed, target_fps, H.264/AAC."""
-    cmd = [
-        FFMPEG_BIN, "-y",
-        "-i", clip_path,
-        "-vf", (
-            f"scale=1920:1080:force_original_aspect_ratio=decrease,"
-            f"pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,"
-            f"fps={target_fps}"
-        ),
-        "-vsync", "cfr",
-        "-af", "aresample=async=1",
-        *_encoder_args(),
-        "-c:a", "aac", "-b:a", "128k",
-        "-ar", "44100", "-ac", "2",
-        "-avoid_negative_ts", "make_zero",
-        output_path,
-    ]
+    """Normalize clip to 1920x1080, 30fps, AAC 44100Hz stereo. Uses fast copy if already matching."""
+    info = _probe_format(clip_path)
+
+    already_normal = (
+        info["width"] == 1920
+        and info["height"] == 1080
+        and abs(info["fps"] - target_fps) < 1
+        and info["audio_rate"] == 44100
+        and info["audio_channels"] == 2
+    )
+
+    if already_normal:
+        # Fast path: stream copy + timestamp fix
+        cmd = [
+            FFMPEG_BIN, "-y",
+            "-i", clip_path,
+            "-c", "copy",
+            "-avoid_negative_ts", "make_zero",
+            output_path,
+        ]
+        print(f"  → fast copy (already 1080p/30fps/44100Hz)")
+    else:
+        # Slow fallback: full re-encode
+        print(f"  → re-encoding ({info['width']}x{info['height']}, {info['fps']:.1f}fps, {info['audio_rate']}Hz)")
+        cmd = [
+            FFMPEG_BIN, "-y",
+            "-i", clip_path,
+            "-vf", (
+                f"scale=1920:1080:force_original_aspect_ratio=decrease,"
+                f"pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,"
+                f"fps={target_fps}"
+            ),
+            "-vsync", "cfr",
+            "-af", "aresample=async=1",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+            "-c:a", "aac", "-b:a", "128k",
+            "-ar", "44100", "-ac", "2",
+            "-avoid_negative_ts", "make_zero",
+            output_path,
+        ]
+
     result = subprocess.run(cmd, capture_output=True, timeout=300)
     if result.returncode != 0:
         err = result.stderr[-200:].decode(errors="replace") if result.stderr else ""
@@ -127,6 +191,7 @@ def create_commentary_segment(
             "-map", "1:a",
             *_encoder_args(),
             "-c:a", "aac", "-b:a", "128k",
+            "-ar", "44100", "-ac", "2",
             "-shortest",
             output_path,
         ]
@@ -139,6 +204,7 @@ def create_commentary_segment(
             "-map", "1:a",
             *_encoder_args(),
             "-c:a", "aac", "-b:a", "128k",
+            "-ar", "44100", "-ac", "2",
             "-shortest",
             output_path,
         ]
@@ -297,23 +363,39 @@ def assemble_video(
         print("No valid segments to assemble.")
         return None
 
-    # Step 1: Normalize all segments
+    # Step 1: Normalize all segments (parallel)
     print("\nNormalizing segments...")
     n_segs = len(valid_segments)
 
-    norm_paths = []
-    for i, seg in enumerate(valid_segments):
-        pct = 40 + int((i / n_segs) * 30)
-        if progress_callback:
-            progress_callback(f"Normalizing segment {i+1}/{n_segs}...", pct=pct)
+    def _normalize_one(i, seg):
         norm_path = os.path.join(norm_dir, f"norm_{i:03d}.mp4")
         result = normalize_clip(seg["segment_path"], norm_path)
         if result:
             dur = get_clip_duration(norm_path)
             print(f"  Segment {i} ({seg.get('type', '?')}): {dur:.1f}s")
-            norm_paths.append(norm_path)
+            return (i, norm_path)
         else:
             print(f"  Segment {i}: normalization failed — skipping")
+            return (i, None)
+
+    results = {}
+    completed = 0
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = {
+            pool.submit(_normalize_one, i, seg): i
+            for i, seg in enumerate(valid_segments)
+        }
+        for future in as_completed(futures):
+            idx, norm_path = future.result()
+            completed += 1
+            if norm_path:
+                results[idx] = norm_path
+            pct = 40 + int((completed / n_segs) * 30)
+            if progress_callback:
+                progress_callback(f"Normalized {completed}/{n_segs} segments...", pct=pct)
+
+    # Maintain original order
+    norm_paths = [results[i] for i in sorted(results.keys())]
 
     if not norm_paths:
         print("No segments survived normalization.")

@@ -1305,10 +1305,14 @@
                 <div class="timeline-summary" id="timelineSummary"></div>
             </div>
 
-            <div style="margin-top:16px;">
+            <div style="margin-top:16px;display:flex;flex-direction:column;gap:8px;">
                 <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:#ccc;font-size:13px;">
                     <input type="checkbox" id="chkTransitions" style="accent-color:#8b5cf6;" />
                     Enable cross-dissolve transitions between segments
+                </label>
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:#ccc;font-size:13px;">
+                    <input type="checkbox" id="chkSubtitles" style="accent-color:#8b5cf6;" />
+                    Burn subtitles into video
                 </label>
             </div>
 
@@ -3031,6 +3035,7 @@
             form.append('session_id', sessionId);
             form.append('vo_mode', voMode);
             form.append('transitions', document.getElementById('chkTransitions').checked ? '1' : '0');
+            form.append('subtitles', document.getElementById('chkSubtitles').checked ? '1' : '0');
 
             try {
                 const res = await fetch('/assemble', { method: 'POST', body: form });

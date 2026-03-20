@@ -765,7 +765,7 @@ async def remove_music(session_id: str = Form(...)):
 # ── Step 6: Assemble Final Video ─────────────────────────────────────────────
 
 @app.post("/assemble")
-async def assemble(session_id: str = Form(...), vo_mode: str = Form("tts"), transitions: str = Form("0")):
+async def assemble(session_id: str = Form(...), vo_mode: str = Form("tts"), transitions: str = Form("0"), subtitles: str = Form("0")):
     """Assemble the final commentary video. Returns job_id for SSE streaming."""
     session = _load_session(session_id)
     if not session or not session.get("script"):
@@ -773,6 +773,7 @@ async def assemble(session_id: str = Form(...), vo_mode: str = Form("tts"), tran
 
     music_path = session.get("music_path")
     use_transitions = transitions == "1"
+    use_subtitles = subtitles == "1"
 
     job_id = str(uuid.uuid4())[:8]
     jobs[job_id] = {"status": "running", "queue": Queue(), "result": None, "error": None}
@@ -810,6 +811,7 @@ async def assemble(session_id: str = Form(...), vo_mode: str = Form("tts"), tran
                 heygen_data=pass_heygen,
                 session_id=session_id,
                 transitions=use_transitions,
+                subtitles=use_subtitles,
             )
 
             if result:

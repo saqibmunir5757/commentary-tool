@@ -55,6 +55,7 @@ def run_pipeline(
     heygen_data: dict = None,
     session_id: str = None,
     transitions: bool = False,
+    subtitles: bool = False,
 ) -> Optional[str]:
     """
     Run the full commentary video pipeline.
@@ -406,8 +407,8 @@ def run_pipeline(
         transitions=transitions,
     )
 
-    # Step 8: Generate and burn subtitles
-    if final_path:
+    # Step 8: Generate and burn subtitles (optional)
+    if final_path and subtitles:
         progress("Generating subtitles...", pct=90)
         srt_path = generate_srt_file(script, assembled_segments, output_dir=session_dir)
         if srt_path:
@@ -417,6 +418,8 @@ def run_pipeline(
                 progress("Subtitles burned successfully", pct=98)
             else:
                 progress("Subtitle burning skipped (video still ok without subs)", pct=98)
+    elif final_path:
+        progress("Subtitles skipped (not selected)", pct=98)
 
     if final_path:
         progress(f"Done! Final video: {final_path}")

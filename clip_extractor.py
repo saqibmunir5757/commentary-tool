@@ -127,14 +127,16 @@ def extract_clip_from_local(
     output_path = os.path.join(target_dir, f"{output_name}.mp4")
     print(f"  Extracting: {format_timestamp(start_sec)} -> {format_timestamp(start_sec + duration_sec)} ({duration_sec:.1f}s)")
 
-    audio_args = ["-c:a", "aac", "-b:a", "128k"] if keep_audio else ["-an"]
+    audio_args = ["-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2"] if keep_audio else ["-an"]
 
     cmd = [
         FFMPEG_BIN, "-y",
         "-ss", str(start_sec),
         "-t", str(duration_sec),
         "-i", local_video_path,
-        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,fps=30",
+        "-vsync", "cfr",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
         *audio_args,
         "-avoid_negative_ts", "make_zero",
         output_path,
