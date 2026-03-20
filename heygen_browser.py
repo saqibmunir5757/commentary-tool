@@ -878,55 +878,58 @@ def _split_by_silence(combined_path, vo_segments, progress=None, output_dir=None
         if len(silence_gaps) == 0:
             return _fallback_equal_split(combined_path, vo_segments, progress, output_dir)
 
-    # Step 4: Calculate split points at midpoint of each silence gap
-    split_points = []
-    for gap_start, gap_end in silence_gaps:
-        midpoint = (gap_start + gap_end) / 2
-        split_points.append(midpoint)
+    # Step 4: Build segment boundaries using silence edges (not midpoints)
+    # Each segment runs from previous silence_end to next silence_start
+    used_gaps = silence_gaps[:expected_count - 1]
+    seg_boundaries = []
 
-    # We only need (expected_count - 1) split points
-    # If we have more (e.g., last scene's pause was also detected), take the first N-1
-    if len(split_points) >= expected_count:
-        split_points = split_points[:expected_count - 1]
+    for i in range(expected_count):
+        if i == 0:
+            start = 0.0
+        else:
+            start = used_gaps[i - 1][1]   # silence_end of previous gap
 
-    # Build segment boundaries: [0, split1, split2, ..., end]
-    boundaries = [0.0] + split_points
-    if total_duration > 0:
-        boundaries.append(total_duration)
-    else:
-        # Estimate end from last silence gap
-        last_gap_end = silence_gaps[-1][1] if silence_gaps else split_points[-1] + 30
-        boundaries.append(last_gap_end + 30)
+        if i < len(used_gaps):
+            end = used_gaps[i][0]          # silence_start of next gap
+        elif total_duration > 0:
+            end = total_duration
+        else:
+            last_gap_end = silence_gaps[-1][1] if silence_gaps else start + 30
+            end = last_gap_end + 30
 
-    # Step 5: Split the video at each boundary
+        seg_boundaries.append((start, end))
+
+    if progress:
+        for idx, (s, e) in enumerate(seg_boundaries):
+            progress(f"  Boundary {idx}: {s:.2f}s → {e:.2f}s ({e - s:.1f}s)")
+
+    # Step 5: Split the video at each boundary with frame-accurate re-encoding
     segment_paths = {}
     for i, seg in enumerate(vo_segments):
+        if i >= len(seg_boundaries):
+            break
         seg_id = seg["segment_id"]
-        start_time = boundaries[i]
-        end_time = boundaries[i + 1] if (i + 1) < len(boundaries) else total_duration
+        trim_start, trim_end = seg_boundaries[i]
 
         clips_dir = output_dir or HEYGEN_CLIPS_DIR
         output_file = os.path.join(clips_dir, f"heygen_seg_{seg_id:03d}.mp4")
 
-        # Trim the silence padding: start slightly after previous pause, end before next pause
-        # Add 0.1s offset to skip the tail end of the pause
-        trim_start = start_time + 0.1 if i > 0 else 0.0
-        # End slightly before the pause starts (already at midpoint, so just use it)
-        trim_end = end_time
-
+        # Use -ss after -i for frame-accurate seeking (not keyframe-dependent)
+        # Re-encode to allow cutting at exact positions
         split_cmd = [
             "ffmpeg",
             "-y",
+            "-i", combined_path,
             "-ss", str(trim_start),
             "-to", str(trim_end),
-            "-i", combined_path,
-            "-c", "copy",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+            "-c:a", "aac", "-b:a", "128k",
             "-avoid_negative_ts", "make_zero",
             output_file,
         ]
 
         try:
-            subprocess.run(split_cmd, capture_output=True, timeout=60)
+            subprocess.run(split_cmd, capture_output=True, timeout=120)
             if os.path.exists(output_file) and os.path.getsize(output_file) > 10000:
                 duration = trim_end - trim_start
                 if progress:
