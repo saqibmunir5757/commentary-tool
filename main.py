@@ -54,6 +54,7 @@ def run_pipeline(
     vo_data: dict = None,
     heygen_data: dict = None,
     session_id: str = None,
+    transitions: bool = False,
 ) -> Optional[str]:
     """
     Run the full commentary video pipeline.
@@ -140,7 +141,19 @@ def run_pipeline(
     # Step 5: Generate voiceovers (TTS) — skip if HeyGen covers all VO segments
     heygen_covers_all = False
     if heygen_data and heygen_data.get("successful", 0) > 0:
-        heygen_seg_ids = {hs["segment_id"] for hs in heygen_data.get("heygen_segments", []) if hs.get("success")}
+        heygen_seg_ids = set()
+        for hs in heygen_data.get("heygen_segments", []):
+            if hs.get("success") and hs.get("heygen_video_path"):
+                path = hs["heygen_video_path"]
+                exists = os.path.exists(path)
+                progress(f"  HeyGen segment {hs['segment_id']}: {path} (exists={exists})")
+                if exists:
+                    heygen_seg_ids.add(hs["segment_id"])
+                else:
+                    progress(f"  WARNING: HeyGen segment {hs['segment_id']} file MISSING on disk!")
+            else:
+                progress(f"  HeyGen segment {hs['segment_id']}: success={hs.get('success')}, path={hs.get('heygen_video_path')}")
+
         vo_seg_ids = {s["segment_id"] for s in segments if s["type"].endswith("_voiceover")}
         heygen_covers_all = vo_seg_ids.issubset(heygen_seg_ids)
         if heygen_covers_all:
@@ -148,6 +161,10 @@ def run_pipeline(
         else:
             missing = vo_seg_ids - heygen_seg_ids
             progress(f"Step 5/7: HeyGen missing segments {missing} — generating TTS fallback")
+    elif heygen_data:
+        progress(f"  HeyGen data present but successful={heygen_data.get('successful', 0)}")
+    else:
+        progress("  No HeyGen data — using TTS")
 
     if not heygen_covers_all and not vo_data:
         progress("Step 5/7: Generating voiceovers...")
@@ -219,8 +236,20 @@ def run_pipeline(
     if heygen_data:
         for hs in heygen_data.get("heygen_segments", []):
             if hs.get("success") and hs.get("heygen_video_path"):
-                heygen_lookup[hs["segment_id"]] = hs["heygen_video_path"]
-        progress(f"  HeyGen mode: {len(heygen_lookup)} avatar segments available")
+                path = hs["heygen_video_path"]
+                if os.path.exists(path):
+                    heygen_lookup[hs["segment_id"]] = path
+                else:
+                    progress(f"  WARNING: HeyGen file missing for segment {hs['segment_id']}: {path}")
+        progress(f"  HeyGen mode: {len(heygen_lookup)} avatar segments available (files verified on disk)")
+
+    # Diagnostic: show what we have for each voiceover segment
+    for seg in segments:
+        if seg["type"].endswith("_voiceover"):
+            sid = seg["segment_id"]
+            has_heygen = sid in heygen_lookup
+            has_tts = sid in vo_lookup
+            progress(f"  Segment {sid} ({seg['type']}): heygen={has_heygen}, tts={has_tts}")
 
     # Build assembled segments — skip segments that already exist from a previous run
     assembled_segments = []
@@ -355,6 +384,15 @@ def run_pipeline(
         progress("No segments were successfully assembled.")
         return None
 
+    # Diagnostic: summarize what we assembled
+    type_counts = {}
+    for seg in assembled_segments:
+        t = seg["type"]
+        type_counts[t] = type_counts.get(t, 0) + 1
+    progress(f"  Assembled {len(assembled_segments)} segments: {type_counts}")
+    if not any(s["type"].endswith("_voiceover") for s in assembled_segments):
+        progress("  WARNING: No voiceover/avatar segments in assembly! Output will be real clips only.")
+
     _save("assembled_manifest.json", assembled_segments)
 
     # Step 7: Final assembly
@@ -365,6 +403,7 @@ def run_pipeline(
         progress_callback=progress_callback,
         output_dir=session_dir,
         normalized_dir=normalized_dir,
+        transitions=transitions,
     )
 
     # Step 8: Generate and burn subtitles

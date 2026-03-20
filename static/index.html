@@ -1305,6 +1305,13 @@
                 <div class="timeline-summary" id="timelineSummary"></div>
             </div>
 
+            <div style="margin-top:16px;">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:#ccc;font-size:13px;">
+                    <input type="checkbox" id="chkTransitions" style="accent-color:#8b5cf6;" />
+                    Enable cross-dissolve transitions between segments
+                </label>
+            </div>
+
             <div class="btn-row">
                 <button class="btn btn-ghost" onclick="navigateToStep(4)">Back</button>
                 <div class="spacer"></div>
@@ -1332,11 +1339,6 @@
             </div>
         </div>
 
-        <!-- Video History -->
-        <div class="history-panel" id="historyPanel">
-            <div class="section-label">Previous Videos</div>
-            <div id="historyList"></div>
-        </div>
 
         <!-- Batch Processing -->
         <div class="batch-panel" id="batchPanel">
@@ -1964,8 +1966,8 @@
                                         <span>${timeAgo(s.updated_at)}</span>
                                     </div>
                                     <div class="project-card-actions">
-                                        ${s.final_video ? `<a class="btn btn-primary btn-sm" href="/video/${s.final_video}" target="_blank" onclick="event.stopPropagation()">Play</a>
-                                        <a class="btn btn-secondary btn-sm" href="/video/${s.final_video}" download onclick="event.stopPropagation()">Download</a>` : ''}
+                                        ${s.final_video ? `<a class="btn btn-primary btn-sm" href="/video/${s.final_video}?t=${Date.now()}" target="_blank" onclick="event.stopPropagation()">Play</a>
+                                        <a class="btn btn-secondary btn-sm" href="/video/${s.final_video}?t=${Date.now()}" download onclick="event.stopPropagation()">Download</a>` : ''}
                                         <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); deleteProject('${s.session_id}')">Delete</button>
                                     </div>
                                 </div>
@@ -3028,6 +3030,7 @@
             const form = new FormData();
             form.append('session_id', sessionId);
             form.append('vo_mode', voMode);
+            form.append('transitions', document.getElementById('chkTransitions').checked ? '1' : '0');
 
             try {
                 const res = await fetch('/assemble', { method: 'POST', body: form });
@@ -3068,7 +3071,7 @@
 
                         const resultDiv = document.getElementById('videoResult');
                         resultDiv.classList.remove('hidden');
-                        const videoUrl = `/video/${event.video}`;
+                        const videoUrl = `/video/${event.video}?t=${Date.now()}`;
                         document.getElementById('finalVideo').src = videoUrl;
                         document.getElementById('downloadLink').href = videoUrl;
                         showToast('Video assembled!', 'success');
@@ -3076,7 +3079,6 @@
                         // Update stepper
                         stepData[6] = { title: 'Step 6: Video', detail: event.video };
                         updateStepper();
-                        loadVideoHistory();
                     } else if (event.type === 'error') {
                         document.getElementById('assemblyBarFill').style.width = '0%';
                         document.getElementById('assemblyEta').textContent = 'Failed';
@@ -3148,35 +3150,6 @@
         }
 
         // ── Video History ─────────────────────────────────────────────────
-        async function loadVideoHistory() {
-            try {
-                const res = await fetch('/videos');
-                const data = await res.json();
-                const list = document.getElementById('historyList');
-                const panel = document.getElementById('historyPanel');
-
-                if (data.videos && data.videos.length > 0) {
-                    panel.classList.remove('hidden');
-                    list.innerHTML = '';
-                    for (const v of data.videos) {
-                        list.innerHTML += `
-                            <div class="history-item">
-                                <div>
-                                    <span class="hi-info">${v.filename}</span>
-                                    <span class="hi-size">${v.size_mb} MB</span>
-                                </div>
-                                <div style="display:flex;gap:6px;">
-                                    <a href="/video/${v.filename}" class="btn btn-sm btn-secondary" target="_blank">Play</a>
-                                    <a href="/video/${v.filename}" class="btn btn-sm btn-primary" download>Download</a>
-                                </div>
-                            </div>
-                        `;
-                    }
-                } else {
-                    panel.classList.add('hidden');
-                }
-            } catch (e) { /* ignore */ }
-        }
 
         // ── Start Over ────────────────────────────────────────────────────
         // ── Timeline Preview ──────────────────────────────────────────────
@@ -3362,7 +3335,6 @@
             document.getElementById('btnBatchRun').textContent = 'Run Batch';
             log('Batch complete!', 'done');
             showToast('Batch processing complete', 'success');
-            loadVideoHistory();
         }
 
         // ── HeyGen Avatar Functions ──────────────────────────────────

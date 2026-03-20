@@ -81,9 +81,12 @@ def normalize_clip(clip_path: str, output_path: str, target_fps: int = 30) -> Op
             f"pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,"
             f"fps={target_fps}"
         ),
+        "-vsync", "cfr",
+        "-af", "aresample=async=1",
         *_encoder_args(),
         "-c:a", "aac", "-b:a", "128k",
         "-ar", "44100", "-ac", "2",
+        "-avoid_negative_ts", "make_zero",
         output_path,
     ]
     result = subprocess.run(cmd, capture_output=True, timeout=300)
@@ -236,6 +239,7 @@ def _simple_concat(segment_paths: list, output_path: str) -> bool:
         "-f", "concat", "-safe", "0",
         "-i", concat_list,
         "-c", "copy",
+        "-avoid_negative_ts", "make_zero",
         output_path,
     ], capture_output=True, timeout=300)
 
@@ -249,6 +253,7 @@ def _simple_concat(segment_paths: list, output_path: str) -> bool:
         "-i", concat_list,
         *_encoder_args(),
         "-c:a", "aac", "-b:a", "128k",
+        "-avoid_negative_ts", "make_zero",
         output_path,
     ], capture_output=True, timeout=300)
     return result2.returncode == 0 and os.path.exists(output_path)
@@ -261,6 +266,7 @@ def assemble_video(
     progress_callback=None,
     output_dir: str = None,
     normalized_dir: str = None,
+    transitions: bool = False,
 ) -> Optional[str]:
     """
     Assemble all prepared segments into a final video.
@@ -313,13 +319,18 @@ def assemble_video(
         print("No segments survived normalization.")
         return None
 
-    # Step 2: Concatenate with transitions
-    if progress_callback:
-        progress_callback("Concatenating with transitions...", pct=70)
-    print("\nConcatenating with transitions...")
-
+    # Step 2: Concatenate segments
     concat_path = os.path.join(out_dir, "concat_video.mp4")
-    ok = _concat_with_transitions(norm_paths, concat_path)
+    if transitions:
+        if progress_callback:
+            progress_callback("Concatenating with transitions...", pct=70)
+        print("\nConcatenating with transitions...")
+        ok = _concat_with_transitions(norm_paths, concat_path)
+    else:
+        if progress_callback:
+            progress_callback("Concatenating segments...", pct=70)
+        print("\nConcatenating segments...")
+        ok = _simple_concat(norm_paths, concat_path)
     if not ok:
         print("Concatenation failed.")
         return None

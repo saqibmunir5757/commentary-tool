@@ -765,13 +765,14 @@ async def remove_music(session_id: str = Form(...)):
 # ── Step 6: Assemble Final Video ─────────────────────────────────────────────
 
 @app.post("/assemble")
-async def assemble(session_id: str = Form(...), vo_mode: str = Form("tts")):
+async def assemble(session_id: str = Form(...), vo_mode: str = Form("tts"), transitions: str = Form("0")):
     """Assemble the final commentary video. Returns job_id for SSE streaming."""
     session = _load_session(session_id)
     if not session or not session.get("script"):
         return {"error": "No script found."}
 
     music_path = session.get("music_path")
+    use_transitions = transitions == "1"
 
     job_id = str(uuid.uuid4())[:8]
     jobs[job_id] = {"status": "running", "queue": Queue(), "result": None, "error": None}
@@ -785,6 +786,18 @@ async def assemble(session_id: str = Form(...), vo_mode: str = Form("tts")):
                     event["pct"] = pct
                 q.put(event)
 
+            # Diagnostic: log what data is being passed to pipeline
+            _hd = session.get("heygen_data")
+            _hd_success = _hd.get("successful", 0) if isinstance(_hd, dict) else 0
+            _hd_total = _hd.get("total", 0) if isinstance(_hd, dict) else 0
+            _vd = session.get("vo_data")
+            progress(f"[Assemble] vo_mode={vo_mode}, heygen_data={_hd_success}/{_hd_total} successful, vo_data={'present' if _vd else 'None'}")
+
+            # Pass heygen_data if mode is heygen/heygen_browser OR if we have successful segments
+            pass_heygen = _hd if (vo_mode in ("heygen", "heygen_browser") or _hd_success > 0) else None
+            if not pass_heygen and _hd:
+                progress(f"[Assemble] WARNING: heygen_data exists but NOT passed (vo_mode={vo_mode}, successful={_hd_success})")
+
             result = run_pipeline(
                 youtube_url=session["youtube_url"],
                 stance_id=session.get("stance_id", "balanced"),
@@ -794,8 +807,9 @@ async def assemble(session_id: str = Form(...), vo_mode: str = Form("tts")):
                 analysis=session.get("analysis"),
                 script=session.get("script"),
                 vo_data=session.get("vo_data"),
-                heygen_data=session.get("heygen_data") if (vo_mode in ("heygen", "heygen_browser") or session.get("heygen_data", {}).get("successful", 0) > 0) else None,
+                heygen_data=pass_heygen,
                 session_id=session_id,
+                transitions=use_transitions,
             )
 
             if result:
@@ -1055,7 +1069,11 @@ async def serve_voiceover(segment_id: int, session_id: str = None):
 async def serve_video(filename: str):
     path = os.path.join(OUTPUT_DIR, filename)
     if os.path.exists(path):
-        return FileResponse(path, media_type="video/mp4")
+        return FileResponse(
+            path,
+            media_type="video/mp4",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
     return {"error": "Video not found"}
 
 
