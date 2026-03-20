@@ -292,12 +292,14 @@ def assemble_video(
         return None
 
     # Step 1: Normalize all segments
-    if progress_callback:
-        progress_callback("Normalizing segments...")
     print("\nNormalizing segments...")
+    n_segs = len(valid_segments)
 
     norm_paths = []
     for i, seg in enumerate(valid_segments):
+        pct = 40 + int((i / n_segs) * 30)
+        if progress_callback:
+            progress_callback(f"Normalizing segment {i+1}/{n_segs}...", pct=pct)
         norm_path = os.path.join(norm_dir, f"norm_{i:03d}.mp4")
         result = normalize_clip(seg["segment_path"], norm_path)
         if result:
@@ -313,7 +315,7 @@ def assemble_video(
 
     # Step 2: Concatenate with transitions
     if progress_callback:
-        progress_callback("Concatenating with transitions...")
+        progress_callback("Concatenating with transitions...", pct=70)
     print("\nConcatenating with transitions...")
 
     concat_path = os.path.join(out_dir, "concat_video.mp4")
@@ -325,7 +327,7 @@ def assemble_video(
     # Step 3: Optional music mix
     if music_path and os.path.exists(music_path):
         if progress_callback:
-            progress_callback("Mixing background music...")
+            progress_callback("Mixing background music...", pct=85)
         print("\nMixing background music...")
 
         total_dur = get_clip_duration(concat_path)

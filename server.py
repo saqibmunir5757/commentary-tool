@@ -202,8 +202,11 @@ async def gen_script_video(script_text: str = Form(...)):
     def _run():
         q = jobs[job_id]["queue"]
         try:
-            def progress(msg):
-                q.put({"type": "progress", "message": msg})
+            def progress(msg, pct=None):
+                event = {"type": "progress", "message": msg}
+                if pct is not None:
+                    event["pct"] = pct
+                q.put(event)
 
             result = generate_single_video_browser_sync(
                 script_text=script_text,
@@ -602,8 +605,11 @@ async def gen_voiceover(
     def _run():
         q = jobs[job_id]["queue"]
         try:
-            def progress(msg):
-                q.put({"type": "progress", "message": msg})
+            def progress(msg, pct=None):
+                event = {"type": "progress", "message": msg}
+                if pct is not None:
+                    event["pct"] = pct
+                q.put(event)
 
             dirs = ensure_session_dirs(session_id)
             vo_data = generate_tts_voiceovers(
@@ -773,8 +779,11 @@ async def assemble(session_id: str = Form(...), vo_mode: str = Form("tts")):
     def _run():
         q = jobs[job_id]["queue"]
         try:
-            def progress(msg):
-                q.put({"type": "progress", "message": msg})
+            def progress(msg, pct=None):
+                event = {"type": "progress", "message": msg}
+                if pct is not None:
+                    event["pct"] = pct
+                q.put(event)
 
             result = run_pipeline(
                 youtube_url=session["youtube_url"],
@@ -849,8 +858,11 @@ async def gen_heygen(
     def _run():
         q = jobs[job_id]["queue"]
         try:
-            def progress(msg):
-                q.put({"type": "progress", "message": msg})
+            def progress(msg, pct=None):
+                event = {"type": "progress", "message": msg}
+                if pct is not None:
+                    event["pct"] = pct
+                q.put(event)
 
             dirs = ensure_session_dirs(session_id)
             heygen_data = generate_all_commentary_segments(
@@ -896,8 +908,11 @@ async def gen_heygen_browser(
     def _run():
         q = jobs[job_id]["queue"]
         try:
-            def progress(msg):
-                q.put({"type": "progress", "message": msg})
+            def progress(msg, pct=None):
+                event = {"type": "progress", "message": msg}
+                if pct is not None:
+                    event["pct"] = pct
+                q.put(event)
 
             def on_seg_complete(interim_data, seg_result):
                 session["heygen_data"] = interim_data
@@ -951,8 +966,11 @@ async def batch_process(
     def _run():
         q = jobs[job_id]["queue"]
         try:
-            def progress(msg):
-                q.put({"type": "progress", "message": msg})
+            def progress(msg, pct=None):
+                event = {"type": "progress", "message": msg}
+                if pct is not None:
+                    event["pct"] = pct
+                q.put(event)
 
             # Run full pipeline with balanced stance, optional tone preset
             result = run_pipeline(

@@ -82,10 +82,10 @@ def run_pipeline(
             json.dump(data, f, indent=2, default=str)
         print(f"  Saved: {path}")
 
-    def progress(msg):
+    def progress(msg, pct=None):
         print(f"[Pipeline] {msg}")
         if progress_callback:
-            progress_callback(msg)
+            progress_callback(msg, pct=pct)
 
     # Step 1: Download transcript
     if not transcript_data:
@@ -224,8 +224,9 @@ def run_pipeline(
 
     # Build assembled segments — skip segments that already exist from a previous run
     assembled_segments = []
+    total_segs = len(segments)
 
-    for seg in segments:
+    for seg_idx, seg in enumerate(segments):
         seg_id = seg["segment_id"]
         seg_type = seg["type"]
 
@@ -234,7 +235,7 @@ def run_pipeline(
             entry = existing_assembled[seg_id]
             assembled_segments.append(entry)
             dur = get_clip_duration(entry["segment_path"])
-            progress(f"  Segment {seg_id} ({seg_type}): resumed from previous run ({dur:.1f}s)")
+            progress(f"  Segment {seg_id} ({seg_type}): resumed from previous run ({dur:.1f}s)", pct=int((seg_idx / total_segs) * 40))
             continue
 
         if seg_type in ("hook_voiceover", "commentary_voiceover"):
@@ -249,7 +250,7 @@ def run_pipeline(
                     "segment_path": heygen_path,
                 })
                 label = "Hook" if seg_type == "hook_voiceover" else "Commentary"
-                progress(f"  {label} segment {seg_id} ready ({dur:.1f}s) — HeyGen avatar")
+                progress(f"  {label} segment {seg_id} ready ({dur:.1f}s) — HeyGen avatar", pct=int((seg_idx / total_segs) * 40))
                 _save("assembled_manifest.json", assembled_segments)
                 continue
 
@@ -280,10 +281,11 @@ def run_pipeline(
                         "segment_path": result,
                     })
                     _save("assembled_manifest.json", assembled_segments)
+                    seg_pct = int((seg_idx / total_segs) * 40)
                     if hook_start > 0.5:
-                        progress(f"  Hook segment ready ({vo_dur:.1f}s) — skipped ad at start")
+                        progress(f"  Hook segment ready ({vo_dur:.1f}s) — skipped ad at start", pct=seg_pct)
                     else:
-                        progress(f"  Hook segment ready ({vo_dur:.1f}s)")
+                        progress(f"  Hook segment ready ({vo_dur:.1f}s)", pct=seg_pct)
 
             else:  # commentary_voiceover
                 vo_path = vo_lookup.get(seg_id)
@@ -313,10 +315,11 @@ def run_pipeline(
                         "segment_path": result,
                     })
                     _save("assembled_manifest.json", assembled_segments)
+                    seg_pct = int((seg_idx / total_segs) * 40)
                     if bg_start != prev_clip_end:
-                        progress(f"  Commentary segment {seg_id} ready ({vo_dur:.1f}s) — skipped ad")
+                        progress(f"  Commentary segment {seg_id} ready ({vo_dur:.1f}s) — skipped ad", pct=seg_pct)
                     else:
-                        progress(f"  Commentary segment {seg_id} ready ({vo_dur:.1f}s)")
+                        progress(f"  Commentary segment {seg_id} ready ({vo_dur:.1f}s)", pct=seg_pct)
 
         elif seg_type == "real_clip":
             # Real clip: extract from source with original audio, skip ad sections
@@ -345,7 +348,7 @@ def run_pipeline(
                     "segment_path": clip_path,
                 })
                 clip_dur = get_clip_duration(clip_path)
-                progress(f"  Real clip {seg_id} ready ({clip_dur:.1f}s)")
+                progress(f"  Real clip {seg_id} ready ({clip_dur:.1f}s)", pct=int((seg_idx / total_segs) * 40))
                 _save("assembled_manifest.json", assembled_segments)
 
     if not assembled_segments:
@@ -366,15 +369,15 @@ def run_pipeline(
 
     # Step 8: Generate and burn subtitles
     if final_path:
-        progress("Generating subtitles...")
+        progress("Generating subtitles...", pct=90)
         srt_path = generate_srt_file(script, assembled_segments, output_dir=session_dir)
         if srt_path:
-            progress("Burning subtitles into video...")
+            progress("Burning subtitles into video...", pct=95)
             ok = burn_subtitles(final_path, srt_path)
             if ok:
-                progress("Subtitles burned successfully")
+                progress("Subtitles burned successfully", pct=98)
             else:
-                progress("Subtitle burning skipped (video still ok without subs)")
+                progress("Subtitle burning skipped (video still ok without subs)", pct=98)
 
     if final_path:
         progress(f"Done! Final video: {final_path}")

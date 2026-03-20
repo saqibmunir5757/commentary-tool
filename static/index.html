@@ -1414,6 +1414,18 @@
                 'Turning thoughts into gold...',
                 'Your commentary is going to hit different...',
             ],
+            assembly: [
+                'Stitching your masterpiece together...',
+                'Making sure every frame is perfect...',
+                'The final countdown has begun...',
+                'Rendering greatness takes a moment...',
+                'Your video is almost ready to blow up...',
+                'Adding the finishing touches...',
+                'This is where the magic comes together...',
+                'Patience, the best things take time...',
+                'Almost there, your audience is waiting...',
+                'Wrapping it up with a bow...',
+            ],
             avatar: [
                 'Generating avatar videos...',
                 'Your avatar is warming up its vocal cords...',
@@ -3036,21 +3048,18 @@
                         progressDiv.innerHTML += `<div class="msg">${event.message}</div>`;
                         progressDiv.scrollTop = progressDiv.scrollHeight;
 
-                        // Estimate progress (rough: each segment ~2 messages)
-                        const estTotal = totalSegments * 3 + 5;
-                        const pct = Math.min(95, Math.round((assemblyMsgCount / estTotal) * 100));
-                        document.getElementById('assemblyBarFill').style.width = pct + '%';
-
-                        // ETA based on elapsed time and progress
-                        const elapsed = (Date.now() - assemblyStartTime) / 1000;
-                        if (pct > 10) {
-                            const estRemaining = Math.round(elapsed * (100 - pct) / pct);
-                            if (estRemaining > 60) {
-                                document.getElementById('assemblyEta').textContent = `~${Math.round(estRemaining / 60)} min remaining`;
-                            } else {
-                                document.getElementById('assemblyEta').textContent = `~${estRemaining}s remaining`;
-                            }
+                        // Use real percentage from backend if available
+                        if (event.pct !== undefined) {
+                            document.getElementById('assemblyBarFill').style.width = event.pct + '%';
+                        } else {
+                            const estTotal = totalSegments * 3 + 5;
+                            const pct = Math.min(95, Math.round((assemblyMsgCount / estTotal) * 100));
+                            document.getElementById('assemblyBarFill').style.width = pct + '%';
                         }
+
+                        // Show funny line
+                        const assemblyLines = funnyLoadingLines.assembly;
+                        document.getElementById('assemblyEta').textContent = assemblyLines[assemblyMsgCount % assemblyLines.length];
                     } else if (event.type === 'done') {
                         document.getElementById('assemblyBarFill').style.width = '100%';
                         document.getElementById('assemblyEta').textContent = 'Complete!';
