@@ -621,14 +621,14 @@ def _generate_and_download(page, output_path, progress=None):
     # Instead of detecting render status (unreliable), we just try to download
     # each cycle. If the download succeeds, the video is ready.
     max_wait = 900  # 15 minutes (includes the 3-min wait above)
-    poll_interval = 5  # check every 5 seconds
+    poll_interval = 10  # check every 10 seconds
     elapsed = 180  # account for the 3-min wait
     download_success = False
 
     while elapsed < max_wait:
         # Refresh the projects page
-        page.reload(wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_timeout(2000)
+        page.goto("https://app.heygen.com/projects", wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(3000)
 
         if progress:
             progress(f"  Checking... ({elapsed}s elapsed, URL: {page.url})")
@@ -692,44 +692,36 @@ def _generate_and_download(page, output_path, progress=None):
             page.mouse.move(bb["x"] + bb["width"] / 2, bb["y"] - 120)
             page.wait_for_timeout(1500)
 
-            # Click the three-dot menu button (iconpark-icon name="more-level")
+            # Click the three-dot menu button scoped to OUR video card
+            # (.first grabs the page filter button, not the card menu — must scope to card)
             dots_clicked = False
 
-            try:
-                btn = page.locator('button:has(iconpark-icon[name="more-level"])').first
-                if btn.is_visible(timeout=2000):
-                    btn.click()
-                    dots_clicked = True
-            except Exception:
-                pass
-
-            # JS fallback: find the more-level icon button near our title
-            if not dots_clicked:
-                dots_pos = page.evaluate("""(title) => {
-                    const els = document.querySelectorAll('*');
-                    for (const el of els) {
-                        if (el.children.length === 0 && el.textContent.trim() === title) {
-                            let card = el;
-                            for (let i = 0; i < 10; i++) {
-                                card = card.parentElement;
-                                if (!card) break;
-                                const icons = card.querySelectorAll('iconpark-icon[name="more-level"]');
-                                for (const icon of icons) {
-                                    const btn = icon.closest('button');
-                                    if (btn) {
-                                        const rect = btn.getBoundingClientRect();
-                                        return {x: rect.x + rect.width/2, y: rect.y + rect.height/2};
-                                    }
+            # Primary: JS finds the more-level button within our card and gets coords
+            dots_pos = page.evaluate("""(title) => {
+                const els = document.querySelectorAll('*');
+                for (const el of els) {
+                    if (el.children.length === 0 && el.textContent.trim() === title) {
+                        let card = el;
+                        for (let i = 0; i < 10; i++) {
+                            card = card.parentElement;
+                            if (!card) break;
+                            const icons = card.querySelectorAll('iconpark-icon[name="more-level"]');
+                            for (const icon of icons) {
+                                const btn = icon.closest('button') || icon;
+                                const rect = btn.getBoundingClientRect();
+                                if (rect.width > 0 && rect.height > 0) {
+                                    return {x: rect.x + rect.width/2, y: rect.y + rect.height/2};
                                 }
                             }
-                            return null;
                         }
+                        return null;
                     }
-                    return null;
-                }""", unique_title)
-                if dots_pos:
-                    page.mouse.click(dots_pos["x"], dots_pos["y"])
-                    dots_clicked = True
+                }
+                return null;
+            }""", unique_title)
+            if dots_pos:
+                page.mouse.click(dots_pos["x"], dots_pos["y"])
+                dots_clicked = True
 
             if not dots_clicked:
                 if progress:
@@ -772,15 +764,11 @@ def _generate_and_download(page, output_path, progress=None):
                 page.keyboard.press("Escape")
                 page.wait_for_timeout(1500)
 
-                # Re-click the three-dot menu
+                # Re-click the three-dot menu (scoped to our card)
                 retry_clicked = False
-                try:
-                    btn = page.locator('button:has(iconpark-icon[name="more-level"])').first
-                    if btn.is_visible(timeout=2000):
-                        btn.click()
-                        retry_clicked = True
-                except Exception:
-                    pass
+                if dots_pos:
+                    page.mouse.click(dots_pos["x"], dots_pos["y"])
+                    retry_clicked = True
 
                 if retry_clicked:
                     page.wait_for_timeout(2500)
