@@ -612,18 +612,23 @@ def _generate_and_download(page, output_path, progress=None):
     if progress:
         progress(f"On projects page (URL: {page.url}) — looking for '{unique_title}'...")
 
-    # Step 5 + 6 combined: Refresh page every 25s, try to download.
+    # Wait 3 minutes for HeyGen to render before starting download checks
+    if progress:
+        progress("Waiting 3 minutes for HeyGen to render video...")
+    page.wait_for_timeout(180_000)
+
+    # Step 5 + 6 combined: Reload page every 5s, try to download.
     # Instead of detecting render status (unreliable), we just try to download
     # each cycle. If the download succeeds, the video is ready.
-    max_wait = 900  # 15 minutes
-    poll_interval = 25  # refresh every 25 seconds
-    elapsed = 0
+    max_wait = 900  # 15 minutes (includes the 3-min wait above)
+    poll_interval = 5  # check every 5 seconds
+    elapsed = 180  # account for the 3-min wait
     download_success = False
 
     while elapsed < max_wait:
         # Refresh the projects page
-        page.goto("https://app.heygen.com/projects", wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_timeout(4000)
+        page.reload(wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(2000)
 
         if progress:
             progress(f"  Checking... ({elapsed}s elapsed, URL: {page.url})")
@@ -733,20 +738,66 @@ def _generate_and_download(page, output_path, progress=None):
                 elapsed += poll_interval
                 continue
 
-            page.wait_for_timeout(1000)
+            page.wait_for_timeout(2500)
+
+            # Debug: log dropdown menu contents
+            if progress:
+                menu_items = page.evaluate("""() => {
+                    const items = [];
+                    document.querySelectorAll(
+                        '[role="menuitem"], li, [class*="menu-item"], [class*="MenuItem"]'
+                    ).forEach(el => {
+                        const t = el.textContent.trim();
+                        if (t && t.length < 50 && el.offsetWidth > 0) items.push(t);
+                    });
+                    return [...new Set(items)].slice(0, 10);
+                }""")
+                progress(f"  Dropdown items: {menu_items}")
 
             # Check if "Download" option exists in the dropdown
-            dl_option = page.locator('text="Download"').first
-            try:
-                if not dl_option.is_visible(timeout=2000):
-                    page.keyboard.press("Escape")
-                    if progress:
-                        progress(f"  Still rendering (no download option)... ({elapsed}s elapsed)")
-                    page.wait_for_timeout(poll_interval * 1000)
-                    elapsed += poll_interval
+            dl_option = None
+            dl_found = False
+            for selector in ['text="Download"', ':text-matches("^Download$", "i")', 'li:has-text("Download")']:
+                try:
+                    candidate = page.locator(selector).first
+                    if candidate.is_visible(timeout=1500):
+                        dl_option = candidate
+                        dl_found = True
+                        break
+                except Exception:
                     continue
-            except Exception:
+
+            if not dl_found:
+                # Retry: close menu, wait, try clicking three-dot again
                 page.keyboard.press("Escape")
+                page.wait_for_timeout(1500)
+
+                # Re-click the three-dot menu
+                retry_clicked = False
+                try:
+                    btn = page.locator('button:has(iconpark-icon[name="more-level"])').first
+                    if btn.is_visible(timeout=2000):
+                        btn.click()
+                        retry_clicked = True
+                except Exception:
+                    pass
+
+                if retry_clicked:
+                    page.wait_for_timeout(2500)
+                    for selector in ['text="Download"', ':text-matches("^Download$", "i")', 'li:has-text("Download")']:
+                        try:
+                            candidate = page.locator(selector).first
+                            if candidate.is_visible(timeout=1500):
+                                dl_option = candidate
+                                dl_found = True
+                                break
+                        except Exception:
+                            continue
+
+            if not dl_found:
+                page.keyboard.press("Escape")
+                if progress:
+                    progress(f"  Still rendering (no download option)... ({elapsed}s elapsed)")
                 page.wait_for_timeout(poll_interval * 1000)
                 elapsed += poll_interval
                 continue
