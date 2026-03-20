@@ -1308,7 +1308,7 @@
             <div class="btn-row">
                 <button class="btn btn-ghost" onclick="navigateToStep(4)">Back</button>
                 <div class="spacer"></div>
-                <button class="btn btn-primary" id="btnAssemble" onclick="assembleVideo()">Assemble Final Video</button>
+                <button class="btn btn-primary" id="btnAssemble" onclick="assembleVideo()" disabled title="Generate voiceovers or avatar videos first">Assemble Final Video</button>
             </div>
         </div>
 
@@ -1391,6 +1391,57 @@
         let currentStep = 1;
         let highestStep = 1;
         let stepData = {}; // Store summaries for completed steps
+
+        // ── Funny loading lines ──────────────────────────────────────────
+        const funnyLoadingLines = {
+            analysis: [
+                'Reading between the lines...',
+                'Identifying who said what...',
+                'Our AI is binge-watching your video...',
+                'Decoding the conversation matrix...',
+                'Finding the juicy parts...',
+                'Separating facts from hot takes...',
+                'Almost there, analyzing every word...',
+                'This video is more interesting than we expected...',
+            ],
+            script: [
+                'Crafting your commentary masterpiece...',
+                'Writing bars that would make Shakespeare jealous...',
+                'Our writer is in the zone, do not disturb...',
+                'Choosing the perfect words...',
+                'Adding just the right amount of spice...',
+                'The script is writing itself... almost...',
+                'Turning thoughts into gold...',
+                'Your commentary is going to hit different...',
+            ],
+            avatar: [
+                'Generating avatar videos...',
+                'Your avatar is warming up its vocal cords...',
+                'Almost there, perfection takes a moment...',
+                'Splitting scenes like a pro editor...',
+                'Your masterpiece is almost ready...',
+                'The avatar is rehearsing one last time...',
+                'Polishing every frame to perfection...',
+                'Making sure the avatar looks its best...',
+                'Cooking up something amazing...',
+                'The magic is happening behind the curtain...',
+                'Hold tight, great things are loading...',
+                'Your video is getting its final touches...',
+                'Assembling the pieces of awesomeness...',
+                'Even Spielberg had to wait for renders...',
+                'Almost done, grab some popcorn...',
+            ],
+        };
+
+        function startFunnyRotation(category, element, intervalMs = 3000) {
+            const lines = funnyLoadingLines[category];
+            let idx = 0;
+            element.textContent = lines[0];
+            return setInterval(() => {
+                idx = (idx + 1) % lines.length;
+                element.textContent = lines[idx];
+            }, intervalMs);
+        }
         let assemblyStartTime = null;
         let assemblyMsgCount = 0;
 
@@ -2085,6 +2136,8 @@
                 if (data.vo_data && data.vo_data.voiceover_segments && data.vo_data.voiceover_segments.length > 0) {
                     voGenerated = true;
                     stepData[5] = { title: 'Step 5: Voiceover', detail: `${data.vo_data.voiceover_segments.length} segments generated` };
+                    document.getElementById('btnAssemble').disabled = false;
+                    document.getElementById('btnAssemble').title = '';
                 }
 
                 // Set step and show correct panel
@@ -2194,13 +2247,16 @@
                 <div class="skeleton skeleton-block"></div>
                 <div class="skeleton skeleton-block"></div>
                 <div class="skeleton skeleton-line w40"></div>
+                <p id="analysisStatus" class="text-sm" style="margin-top:12px;color:#4fc3f7;"></p>
             `;
+            const analysisTimer = startFunnyRotation('analysis', document.getElementById('analysisStatus'));
 
             const form = new FormData();
             form.append('session_id', sessionId);
 
             try {
                 const res = await fetch('/analyze', { method: 'POST', body: form });
+                clearInterval(analysisTimer);
                 const data = await res.json();
                 if (data.error) {
                     document.getElementById('analysisContent').innerHTML = `<p style="color:#f44336">${data.error}</p>`;
@@ -2389,6 +2445,16 @@
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner"></span> Generating script...';
 
+            let scriptStatusEl = document.getElementById('scriptStatus');
+            if (!scriptStatusEl) {
+                scriptStatusEl = document.createElement('p');
+                scriptStatusEl.id = 'scriptStatus';
+                scriptStatusEl.className = 'text-sm';
+                scriptStatusEl.style.cssText = 'margin-top:8px;color:#4fc3f7;text-align:center;';
+                btn.parentNode.insertAdjacentElement('afterend', scriptStatusEl);
+            }
+            const scriptTimer = startFunnyRotation('script', scriptStatusEl);
+
             const form = new FormData();
             form.append('session_id', sessionId);
             form.append('stance_id', selectedStances.join(',') || 'custom');
@@ -2400,6 +2466,8 @@
 
             try {
                 const res = await fetch('/generate-script', { method: 'POST', body: form });
+                clearInterval(scriptTimer);
+                if (scriptStatusEl) scriptStatusEl.remove();
                 const data = await res.json();
                 if (data.error) { showToast('Error: ' + data.error, 'error'); return; }
 
@@ -2419,6 +2487,9 @@
             } catch (e) {
                 showToast('Error: ' + e.message, 'error');
             } finally {
+                clearInterval(scriptTimer);
+                const el = document.getElementById('scriptStatus');
+                if (el) el.remove();
                 btn.disabled = false;
                 btn.textContent = 'Generate Script';
             }
@@ -2794,6 +2865,8 @@
                         btn.disabled = false;
                         btn.textContent = 'Regenerate All TTS';
                         voGenerated = true;
+                        document.getElementById('btnAssemble').disabled = false;
+                        document.getElementById('btnAssemble').title = '';
 
                         document.getElementById('voSegmentList').classList.remove('hidden');
                         if (event.data && event.data.voiceover_segments) {
@@ -3463,7 +3536,8 @@
                     // Estimate progress: ramp from 5% to 90% over messages
                     const pct = Math.min(5 + Math.round(hgMsgCount * 2), 90);
                     hgBarFill.style.width = pct + '%';
-                    hgStatus.textContent = 'Generating avatar videos...';
+                    const avatarLines = funnyLoadingLines.avatar;
+                    hgStatus.textContent = avatarLines[hgMsgCount % avatarLines.length];
                 } else if (event.type === 'segment_complete') {
                     // Individual segment split completed
                 } else if (event.type === 'done') {
@@ -3472,6 +3546,8 @@
                     hgStatus.textContent = `Done! ${result.successful}/${result.total} segments generated.`;
                     btn.textContent = result.failed > 0 ? 'Retry Failed Segments' : 'Regenerate Avatar';
                     btn.disabled = false;
+                    document.getElementById('btnAssemble').disabled = false;
+                    document.getElementById('btnAssemble').title = '';
                     evtSource.close();
                 } else if (event.type === 'error') {
                     hgStatus.textContent = event.message;
