@@ -919,6 +919,12 @@ def _split_by_silence(combined_path, vo_segments, progress=None, output_dir=None
 
     # Step 4: Build segment boundaries using silence edges (not midpoints)
     # Each segment runs from previous silence_end to next silence_start
+    # Filter out leading silence (HeyGen often adds silence at the start of the video)
+    if silence_gaps and silence_gaps[0][0] < 1.0:
+        if progress:
+            progress(f"  Skipping leading silence gap: {silence_gaps[0][0]:.2f}s → {silence_gaps[0][1]:.2f}s")
+        silence_gaps = silence_gaps[1:]
+
     used_gaps = silence_gaps[:expected_count - 1]
     seg_boundaries = []
 

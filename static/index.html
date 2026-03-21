@@ -2158,6 +2158,33 @@
                     document.getElementById('btnAssemble').title = '';
                 }
 
+                // Restore Step 5: HeyGen Avatar (browser)
+                if (data.heygen_data && data.heygen_data.successful > 0) {
+                    stepData[5] = {
+                        title: 'Step 5: Avatar',
+                        detail: `${data.heygen_data.successful}/${data.heygen_data.total} avatar segments ready`
+                    };
+                    document.getElementById('btnAssemble').disabled = false;
+                    document.getElementById('btnAssemble').title = '';
+                    const avatarBtn = document.getElementById('btnHeyGenBrowser');
+                    if (avatarBtn) {
+                        avatarBtn.textContent = 'Regenerate Avatar';
+                        avatarBtn.disabled = false;
+                    }
+                    setVOMode('heygen_browser');
+                    const hgStatus = document.getElementById('heygenBrowserStatus');
+                    const hgBar = document.getElementById('heygenBrowserBar');
+                    const hgBarFill = document.getElementById('heygenBrowserBarFill');
+                    if (hgStatus) {
+                        hgStatus.classList.remove('hidden');
+                        hgStatus.textContent = `Avatar ready — ${data.heygen_data.successful}/${data.heygen_data.total} segments. Want to regenerate?`;
+                    }
+                    if (hgBar && hgBarFill) {
+                        hgBar.classList.remove('hidden');
+                        hgBarFill.style.width = '100%';
+                    }
+                }
+
                 // Set step and show correct panel
                 currentStep = step;
                 highestStep = step;
