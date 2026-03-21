@@ -1104,7 +1104,7 @@ def generate_all_segments_browser_sync(
     combined_output = os.path.join(clips_dir, "heygen_combined.mp4")
 
     with sync_playwright() as p:
-        progress("Launching Chromium with persistent profile...")
+        progress("Initializing avatar generation...")
 
         context = p.chromium.launch_persistent_context(
             user_data_dir=BROWSER_PROFILE_DIR,
@@ -1223,7 +1223,7 @@ def generate_single_video_browser_sync(
     output_path = os.path.join(HEYGEN_CLIPS_DIR, f"script_video_{int(time.time())}.mp4")
 
     with sync_playwright() as p:
-        progress("Launching Chromium with persistent profile...")
+        progress("Initializing avatar generation...")
 
         context = p.chromium.launch_persistent_context(
             user_data_dir=BROWSER_PROFILE_DIR,
