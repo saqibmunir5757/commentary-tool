@@ -1205,13 +1205,34 @@ def generate_all_segments_browser_sync(
     }
 
 
+def _split_script_into_scenes(script_text, max_words=170):
+    """Split script into scenes of ~150-180 words, breaking at sentence boundaries."""
+    sentences = re.split(r'(?<=[.!?])\s+', script_text.strip())
+    scenes = []
+    current = []
+    current_words = 0
+    for sentence in sentences:
+        word_count = len(sentence.split())
+        if current_words + word_count > max_words and current:
+            scenes.append(' '.join(current))
+            current = [sentence]
+            current_words = word_count
+        else:
+            current.append(sentence)
+            current_words += word_count
+    if current:
+        scenes.append(' '.join(current))
+    return scenes if scenes else [script_text.strip()]
+
+
 def generate_single_video_browser_sync(
     script_text: str,
     progress_callback=None,
 ) -> dict:
     """
     Generate a single HeyGen avatar video from a raw script text.
-    Pastes the entire script into one scene — no splitting, no FFmpeg.
+    Splits script into ~150-180 word scenes at sentence boundaries,
+    then generates as one combined video.
 
     Returns: {"success": bool, "video_path": str|None, "error": str|None}
     """
@@ -1222,6 +1243,16 @@ def generate_single_video_browser_sync(
 
     if not script_text or not script_text.strip():
         return {"success": False, "video_path": None, "error": "Empty script text"}
+
+    # Split script into ~150-180 word scenes at sentence boundaries
+    scenes = _split_script_into_scenes(script_text, max_words=170)
+    progress(f"Script split into {len(scenes)} scene(s) (~150-180 words each)")
+
+    # Convert to segment format that _add_all_scenes() expects
+    vo_segments = [
+        {"segment_id": i, "vo_text": scene}
+        for i, scene in enumerate(scenes)
+    ]
 
     os.makedirs(BROWSER_PROFILE_DIR, exist_ok=True)
     os.makedirs(HEYGEN_CLIPS_DIR, exist_ok=True)
@@ -1252,63 +1283,10 @@ def generate_single_video_browser_sync(
                 context.close()
                 return {"success": False, "video_path": None, "error": "Failed to open HeyGen AI Studio"}
 
-            # 2. Paste the entire script into the single scene
-            progress("Pasting script into scene...")
-            text_filled = False
+            # 2. Add each paragraph as a separate scene (reuses commentary flow)
+            _add_all_scenes(page, vo_segments, progress)
 
-            # Try textarea
-            try:
-                ta = page.locator('textarea').first
-                if ta.is_visible(timeout=2000):
-                    ta.click()
-                    page.wait_for_timeout(300)
-                    ta.fill(script_text)
-                    text_filled = True
-            except Exception:
-                pass
-
-            # Try contenteditable div
-            if not text_filled:
-                try:
-                    editable = page.locator('[contenteditable="true"]').first
-                    if editable.is_visible(timeout=2000):
-                        editable.click()
-                        page.wait_for_timeout(300)
-                        editable.fill(script_text)
-                        text_filled = True
-                except Exception:
-                    pass
-
-            # Try placeholder
-            if not text_filled:
-                try:
-                    placeholder = page.locator('text="Type your script"').first
-                    if placeholder.is_visible(timeout=2000):
-                        placeholder.click()
-                        page.wait_for_timeout(500)
-                        page.keyboard.insert_text(script_text)
-                        text_filled = True
-                except Exception:
-                    pass
-
-            # Last resort: click below Script heading
-            if not text_filled:
-                try:
-                    script_label = page.locator('text="Script"').first
-                    bb = script_label.bounding_box()
-                    if bb:
-                        page.mouse.click(bb["x"] + 100, bb["y"] + 80)
-                        page.wait_for_timeout(500)
-                        page.keyboard.insert_text(script_text)
-                        text_filled = True
-                except Exception:
-                    pass
-
-            if not text_filled:
-                context.close()
-                return {"success": False, "video_path": None, "error": "Could not paste script into HeyGen editor"}
-
-            progress("Script pasted successfully")
+            progress("All scenes added successfully")
             page.wait_for_timeout(1000)
 
             # 3. Generate & download the video
