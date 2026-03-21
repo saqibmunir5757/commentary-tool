@@ -2185,6 +2185,15 @@
                     }
                 }
 
+                // Restore completed video
+                if (data.final_video) {
+                    const resultDiv = document.getElementById('videoResult');
+                    resultDiv.classList.remove('hidden');
+                    const videoUrl = `/video/${data.final_video}?t=${Date.now()}`;
+                    document.getElementById('finalVideo').src = videoUrl;
+                    document.getElementById('downloadLink').href = videoUrl;
+                }
+
                 // Set step and show correct panel
                 currentStep = step;
                 highestStep = step;
