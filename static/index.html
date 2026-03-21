@@ -3593,6 +3593,7 @@
             voGenerated = false;
             stepData = {};
             currentStep = 1;
+            highestStep = 1;
             clearSession();
 
             for (let i = 1; i <= TOTAL_STEPS; i++) {
@@ -3601,6 +3602,11 @@
             document.getElementById('panel1').classList.add('active');
             document.getElementById('youtubeUrl').value = '';
             document.getElementById('videoInfo').classList.add('hidden');
+            document.getElementById('videoInfo').innerHTML = '';
+            document.getElementById('analysisContent').innerHTML = '';
+            try { document.getElementById('topicSelection').classList.add('hidden'); } catch(e) {}
+            try { document.getElementById('scriptTimeline').innerHTML = ''; } catch(e) {}
+            try { document.getElementById('scriptStats').innerHTML = ''; } catch(e) {}
             document.getElementById('completedSummaries').innerHTML = '';
             document.getElementById('videoResult').classList.add('hidden');
             document.getElementById('voSegmentList').classList.add('hidden');
