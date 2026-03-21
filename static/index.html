@@ -1045,7 +1045,7 @@
     <div class="stepper-bar" id="stepperBar">
         <div class="stepper-inner">
             <span class="back-to-dash" onclick="showDashboard()" title="Back to Dashboard">&larr;</span>
-            <div class="stepper-logo">CommentaryTool</div>
+            <a href="/" class="stepper-logo" style="text-decoration:none;color:inherit;">CommentaryTool</a>
             <div class="stepper-steps">
                 <div class="stepper-step active" id="stepper_1" onclick="navigateToStep(1)">
                     <span class="step-dot">1</span><span>URL</span>
@@ -1080,7 +1080,10 @@
     <!-- Dashboard View -->
     <div class="dashboard" id="dashboardView">
         <div class="dashboard-header">
-            <h1>Commentary Video Tool</h1>
+            <div style="display:flex;align-items:center;gap:16px;">
+                <a href="/" style="color:#6b7a8d;font-size:13px;text-decoration:none;" title="Back to Home">&larr; Home</a>
+                <h1 style="margin:0;">Commentary Video Tool</h1>
+            </div>
             <button class="btn btn-primary" onclick="startNewProject()">+ New Project</button>
         </div>
         <div id="dashboardContent">
