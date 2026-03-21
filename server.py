@@ -290,7 +290,7 @@ async def list_sessions():
                 "thumbnail": td.get("thumbnail", ""),
                 "duration_seconds": td.get("duration_seconds", 0),
                 "status": data.get("status", "draft"),
-                "current_step": data.get("current_step", _compute_step(data)),
+                "current_step": _compute_step(data),
                 "created_at": data.get("created_at", 0),
                 "updated_at": data.get("updated_at", 0),
                 "final_video": data.get("final_video"),
@@ -312,7 +312,7 @@ async def get_session(session_id: str):
     result = {
         "session_id": session_id,
         "status": session.get("status", "draft"),
-        "current_step": session.get("current_step", _compute_step(session)),
+        "current_step": _compute_step(session),
         "youtube_url": session.get("youtube_url"),
         "transcript_info": {
             "video_id": td.get("video_id"),
