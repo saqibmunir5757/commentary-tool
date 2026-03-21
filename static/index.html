@@ -2015,6 +2015,15 @@
             try { document.getElementById('scriptTimeline').innerHTML = ''; } catch(e) {}
             try { document.getElementById('scriptStats').innerHTML = ''; } catch(e) {}
 
+            // Reset form controls
+            document.getElementById('chkTransitions').checked = false;
+            document.getElementById('chkSubtitles').checked = false;
+            document.getElementById('musicFile').value = '';
+            document.getElementById('musicStatus').classList.add('hidden');
+            document.getElementById('assemblyBarFill').style.width = '0%';
+            document.getElementById('assemblyEta').textContent = '';
+            document.getElementById('videoResult').classList.add('hidden');
+
             // Show wizard
             document.getElementById('dashboardView').style.display = 'none';
             document.getElementById('wizardView').style.display = '';
@@ -2147,6 +2156,7 @@
                     currentScript = data.script;
                     renderScript(data.script);
                     buildTimelinePreview();
+                    document.getElementById('btnScript').disabled = false;
 
                     const stanceLabel = data.stance_id || 'custom';
                     stepData[3] = { title: 'Step 3: Stance', detail: stanceLabel };
@@ -3615,7 +3625,11 @@
             document.getElementById('voSegmentList').classList.add('hidden');
             document.getElementById('ttsProgress').classList.add('hidden');
             document.getElementById('musicStatus').classList.add('hidden');
+            document.getElementById('chkTransitions').checked = false;
+            document.getElementById('chkSubtitles').checked = false;
+            document.getElementById('musicFile').value = '';
             document.getElementById('assemblyBarFill').style.width = '0%';
+            document.getElementById('assemblyEta').textContent = '';
             updateStepper();
         }
 

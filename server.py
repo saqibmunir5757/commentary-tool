@@ -47,6 +47,19 @@ sessions: dict = {}
 SESSIONS_DIR = os.path.join(OUTPUT_DIR, "sessions")
 os.makedirs(SESSIONS_DIR, exist_ok=True)
 
+# Track which session has a running job to prevent double-clicks
+_session_jobs: dict = {}  # session_id -> job_id
+
+
+def _check_running_job(session_id: str) -> dict | None:
+    """If session already has a running job, return its job_id. Else None."""
+    existing_job_id = _session_jobs.get(session_id)
+    if existing_job_id:
+        job = jobs.get(existing_job_id)
+        if job and job["status"] == "running":
+            return {"job_id": existing_job_id, "already_running": True}
+    return None
+
 
 def _compute_step(session: dict) -> int:
     """Determine current wizard step from session data."""
@@ -328,18 +341,25 @@ async def get_session(session_id: str):
         "script": session.get("script"),
         "vo_data": session.get("vo_data"),
         "heygen_data": session.get("heygen_data"),
+        "heygen_avatar_id": session.get("heygen_avatar_id"),
+        "heygen_voice_id": session.get("heygen_voice_id"),
         "music_path": session.get("music_path"),
         "final_video": session.get("final_video"),
+        "last_error": session.get("last_error"),
+        "last_error_step": session.get("last_error_step"),
     }
     return result
 
 
 @app.delete("/session/{session_id}")
 async def delete_session(session_id: str):
-    """Delete a session (draft or completed)."""
+    """Delete a session and all its files (clips, voiceovers, videos)."""
     path = os.path.join(SESSIONS_DIR, f"{session_id}.json")
     if os.path.exists(path):
         os.remove(path)
+    session_dir = os.path.join(OUTPUT_DIR, session_id)
+    if os.path.isdir(session_dir):
+        shutil.rmtree(session_dir, ignore_errors=True)
     sessions.pop(session_id, None)
     return {"status": "ok"}
 
@@ -601,8 +621,13 @@ async def gen_voiceover(
     if not session or not session.get("script"):
         return {"error": "No script found. Run /generate-script first."}
 
+    running = _check_running_job(session_id)
+    if running:
+        return running
+
     job_id = str(uuid.uuid4())[:8]
     jobs[job_id] = {"status": "running", "queue": Queue(), "result": None, "error": None}
+    _session_jobs[session_id] = job_id
 
     def _run():
         q = jobs[job_id]["queue"]
@@ -629,6 +654,9 @@ async def gen_voiceover(
         except Exception as e:
             jobs[job_id]["status"] = "failed"
             jobs[job_id]["error"] = str(e)
+            session["last_error"] = str(e)
+            session["last_error_step"] = "voiceover"
+            _save_session(session_id)
             q.put({"type": "error", "message": str(e)})
 
     executor.submit(_run)
@@ -773,12 +801,17 @@ async def assemble(session_id: str = Form(...), vo_mode: str = Form("tts"), tran
     if not session or not session.get("script"):
         return {"error": "No script found."}
 
+    running = _check_running_job(session_id)
+    if running:
+        return running
+
     music_path = session.get("music_path")
     use_transitions = transitions == "1"
     use_subtitles = subtitles == "1"
 
     job_id = str(uuid.uuid4())[:8]
     jobs[job_id] = {"status": "running", "queue": Queue(), "result": None, "error": None}
+    _session_jobs[session_id] = job_id
 
     def _run():
         q = jobs[job_id]["queue"]
@@ -827,10 +860,16 @@ async def assemble(session_id: str = Form(...), vo_mode: str = Form("tts"), tran
             else:
                 jobs[job_id]["status"] = "failed"
                 jobs[job_id]["error"] = "Assembly failed"
+                session["last_error"] = "Assembly failed"
+                session["last_error_step"] = "assembly"
+                _save_session(session_id)
                 q.put({"type": "error", "message": "Assembly failed"})
         except Exception as e:
             jobs[job_id]["status"] = "failed"
             jobs[job_id]["error"] = str(e)
+            session["last_error"] = str(e)
+            session["last_error_step"] = "assembly"
+            _save_session(session_id)
             q.put({"type": "error", "message": str(e)})
 
     executor.submit(_run)
@@ -870,8 +909,13 @@ async def gen_heygen(
     if not HEYGEN_API_KEY:
         return {"error": "HEYGEN_API_KEY not configured"}
 
+    running = _check_running_job(session_id)
+    if running:
+        return running
+
     job_id = str(uuid.uuid4())[:8]
     jobs[job_id] = {"status": "running", "queue": Queue(), "result": None, "error": None}
+    _session_jobs[session_id] = job_id
 
     def _run():
         q = jobs[job_id]["queue"]
@@ -901,6 +945,9 @@ async def gen_heygen(
         except Exception as e:
             jobs[job_id]["status"] = "failed"
             jobs[job_id]["error"] = str(e)
+            session["last_error"] = str(e)
+            session["last_error_step"] = "heygen"
+            _save_session(session_id)
             q.put({"type": "error", "message": str(e)})
 
     executor.submit(_run)
@@ -920,8 +967,13 @@ async def gen_heygen_browser(
     if not session or not session.get("script"):
         return {"error": "No script found. Run /generate-script first."}
 
+    running = _check_running_job(session_id)
+    if running:
+        return running
+
     job_id = str(uuid.uuid4())[:8]
     jobs[job_id] = {"status": "running", "queue": Queue(), "result": None, "error": None}
+    _session_jobs[session_id] = job_id
 
     def _run():
         q = jobs[job_id]["queue"]
@@ -963,6 +1015,9 @@ async def gen_heygen_browser(
         except Exception as e:
             jobs[job_id]["status"] = "failed"
             jobs[job_id]["error"] = str(e)
+            session["last_error"] = str(e)
+            session["last_error_step"] = "heygen_browser"
+            _save_session(session_id)
             q.put({"type": "error", "message": str(e)})
 
     executor.submit(_run)
@@ -1072,6 +1127,8 @@ async def serve_voiceover(segment_id: int, session_id: str = None):
 @app.get("/video/{filename:path}")
 async def serve_video(filename: str):
     path = os.path.join(OUTPUT_DIR, filename)
+    if not os.path.abspath(path).startswith(os.path.abspath(OUTPUT_DIR)):
+        return {"error": "Invalid path"}
     if os.path.exists(path):
         return FileResponse(
             path,
