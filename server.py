@@ -50,6 +50,8 @@ os.makedirs(SESSIONS_DIR, exist_ok=True)
 
 def _compute_step(session: dict) -> int:
     """Determine current wizard step from session data."""
+    if session.get("final_video"):
+        return 6
     if session.get("vo_data") or session.get("heygen_data"):
         return 5
     if session.get("script"):
