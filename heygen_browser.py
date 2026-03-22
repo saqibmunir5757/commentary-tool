@@ -43,6 +43,9 @@ def _file_md5(path):
 
 def _wait_for_login(page, progress=None):
     """Wait for user to log in if login modal/page is shown."""
+    debug_dir = os.path.join(OUTPUT_DIR, "debug_screenshots")
+    os.makedirs(debug_dir, exist_ok=True)
+
     needs_login = False
     try:
         modal = page.locator('text="Continue with Google"').first
@@ -55,6 +58,13 @@ def _wait_for_login(page, progress=None):
         needs_login = True
 
     if needs_login:
+        # Save debug screenshot so we can see what the browser sees
+        try:
+            page.screenshot(path=os.path.join(debug_dir, "login_required.png"))
+            if progress:
+                progress(f"Debug screenshot saved. URL: {page.url}")
+        except Exception:
+            pass
         if progress:
             progress("Login required — please log in in the browser window (5 min timeout)")
         elapsed = 0
@@ -73,6 +83,11 @@ def _wait_for_login(page, progress=None):
                     progress("Login successful!")
                 page.wait_for_timeout(2000)
                 return True
+        # Save timeout screenshot
+        try:
+            page.screenshot(path=os.path.join(debug_dir, "login_timeout.png"))
+        except Exception:
+            pass
         if progress:
             progress("Login timed out")
         return False
