@@ -167,6 +167,27 @@
             margin-right: 16px;
         }
         .nav-links a:hover { text-decoration: underline; }
+        .close-tab-banner {
+            margin-top: 16px;
+            padding: 12px 16px;
+            background: #0d1925;
+            border: 1px solid #1e3a4a;
+            border-radius: 8px;
+            color: #4fc3f7;
+            font-size: 13px;
+            display: none;
+            align-items: center;
+            gap: 8px;
+        }
+        .close-tab-banner .dismiss {
+            margin-left: auto;
+            background: none;
+            border: none;
+            color: #4a5568;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .close-tab-banner .dismiss:hover { color: #c5cdd8; }
     </style>
 </head>
 <body>
@@ -185,6 +206,11 @@
                 <div class="progress-fill" id="progressFill"></div>
             </div>
             <div class="status-text" id="statusText">Starting...</div>
+        </div>
+
+        <div class="close-tab-banner" id="closeTabBanner">
+            <span>You can close this tab safely. Check progress on the <a href="/script-history" style="color:#4fc3f7;text-decoration:underline;">History page</a> anytime.</span>
+            <button class="dismiss" onclick="document.getElementById('closeTabBanner').style.display='none'">&times;</button>
         </div>
 
         <div class="error-msg hidden" id="errorMsg"></div>
@@ -212,25 +238,124 @@
             charCount.textContent = scriptInput.value.length;
         });
 
+        // ── connectSSE: auto-reconnect with exponential backoff ──
+        function connectSSE(url, handlers) {
+            let retries = 0;
+            const maxRetries = 5;
+            const maxDelay = 15000;
+            let es = null;
+
+            function connect() {
+                es = new EventSource(url);
+                es.onmessage = (e) => {
+                    retries = 0; // reset on success
+                    if (handlers.onMessage) handlers.onMessage(e);
+                };
+                es.onerror = () => {
+                    es.close();
+                    if (retries < maxRetries) {
+                        const delay = Math.min(1000 * Math.pow(2, retries), maxDelay);
+                        retries++;
+                        setTimeout(connect, delay);
+                    } else {
+                        if (handlers.onError) handlers.onError();
+                    }
+                };
+            }
+            connect();
+            return { close: () => { retries = maxRetries; if (es) es.close(); } };
+        }
+
+        // ── Show result video ──
+        function showResult(filename) {
+            const videoUrl = `/download-script-video/${filename}`;
+            document.getElementById('videoPreview').src = videoUrl;
+            document.getElementById('downloadLink').href = videoUrl;
+            document.getElementById('resultSection').classList.remove('hidden');
+            document.getElementById('progressSection').classList.remove('hidden');
+            document.getElementById('progressFill').style.width = '100%';
+            document.getElementById('statusText').textContent = 'Video generated successfully!';
+            document.getElementById('closeTabBanner').style.display = 'none';
+            document.getElementById('generateBtn').disabled = false;
+            document.getElementById('generateBtn').textContent = 'Generate Again';
+        }
+
+        // ── Show error message ──
+        function showError(msg) {
+            const errorMsg = document.getElementById('errorMsg');
+            errorMsg.textContent = msg;
+            errorMsg.classList.remove('hidden');
+            document.getElementById('progressFill').style.width = '0%';
+            document.getElementById('statusText').textContent = 'Generation failed.';
+            document.getElementById('closeTabBanner').style.display = 'none';
+            document.getElementById('generateBtn').disabled = false;
+            document.getElementById('generateBtn').textContent = 'Retry';
+        }
+
+        // ── Stream a running job ──
+        function streamJob(jobId) {
+            const progressSection = document.getElementById('progressSection');
+            const progressFill = document.getElementById('progressFill');
+            const statusText = document.getElementById('statusText');
+            const btn = document.getElementById('generateBtn');
+
+            progressSection.classList.remove('hidden');
+            progressFill.style.width = '5%';
+            statusText.textContent = 'Generating avatar video...';
+            btn.disabled = true;
+            btn.textContent = 'Generating...';
+            document.getElementById('closeTabBanner').style.display = 'flex';
+            document.getElementById('errorMsg').classList.add('hidden');
+            document.getElementById('resultSection').classList.add('hidden');
+
+            let msgCount = 0;
+            connectSSE(`/stream/${jobId}`, {
+                onMessage: (e) => {
+                    const event = JSON.parse(e.data);
+                    if (event.type === 'progress') {
+                        msgCount++;
+                        progressFill.style.width = Math.min(5 + Math.round(msgCount * 2), 90) + '%';
+                        statusText.textContent = 'Generating avatar video...';
+                    } else if (event.type === 'done') {
+                        if (event.video_path) {
+                            showResult(event.video_path.split('/').pop());
+                        } else if (event.video_filename) {
+                            showResult(event.video_filename);
+                        }
+                        localStorage.removeItem('active_script_job_id');
+                    } else if (event.type === 'error') {
+                        showError(event.message);
+                        localStorage.removeItem('active_script_job_id');
+                    }
+                },
+                onError: () => {
+                    // All retries exhausted — check job status from server
+                    fetch(`/script-job/${jobId}`).then(r => r.json()).then(job => {
+                        if (job.status === 'completed' && job.video_filename) {
+                            showResult(job.video_filename);
+                        } else if (job.status === 'failed') {
+                            showError(job.error || 'Generation failed.');
+                        } else {
+                            showError('Connection lost. Check the History page for results.');
+                        }
+                    }).catch(() => {
+                        showError('Connection lost. Check the History page for results.');
+                    });
+                    localStorage.removeItem('active_script_job_id');
+                },
+            });
+        }
+
+        // ── Generate: submit script and stream ──
         async function generate() {
             const text = scriptInput.value.trim();
             if (!text) return;
 
             const btn = document.getElementById('generateBtn');
-            const progressSection = document.getElementById('progressSection');
-            const progressFill = document.getElementById('progressFill');
-            const statusText = document.getElementById('statusText');
-            const errorMsg = document.getElementById('errorMsg');
-            const resultSection = document.getElementById('resultSection');
-
-            // Reset UI
             btn.disabled = true;
             btn.textContent = 'Generating...';
-            progressSection.classList.remove('hidden');
-            progressFill.style.width = '5%';
-            statusText.textContent = 'Starting avatar generation...';
-            errorMsg.classList.add('hidden');
-            resultSection.classList.add('hidden');
+            document.getElementById('errorMsg').classList.add('hidden');
+            document.getElementById('resultSection').classList.add('hidden');
 
             try {
                 const form = new FormData();
@@ -240,69 +365,58 @@
                 const data = await res.json();
 
                 if (data.error) {
-                    errorMsg.textContent = data.error;
-                    errorMsg.classList.remove('hidden');
-                    btn.disabled = false;
-                    btn.textContent = 'Generate Avatar Video';
-                    progressSection.classList.add('hidden');
+                    showError(data.error);
+                    document.getElementById('progressSection').classList.add('hidden');
                     return;
                 }
 
-                // Store job_id for /logs page
-                localStorage.setItem('active_job_id', data.job_id);
-
-                // Connect to SSE stream
-                const evtSource = new EventSource(`/stream/${data.job_id}`);
-                let msgCount = 0;
-
-                evtSource.onmessage = (e) => {
-                    const event = JSON.parse(e.data);
-
-                    if (event.type === 'progress') {
-                        msgCount++;
-                        const pct = Math.min(5 + Math.round(msgCount * 2), 90);
-                        progressFill.style.width = pct + '%';
-                        statusText.textContent = 'Generating avatar video...';
-                    } else if (event.type === 'done') {
-                        progressFill.style.width = '100%';
-                        statusText.textContent = 'Video generated successfully!';
-                        evtSource.close();
-                        btn.disabled = false;
-                        btn.textContent = 'Generate Again';
-
-                        if (event.video_path) {
-                            const filename = event.video_path.split('/').pop();
-                            const videoUrl = `/download-script-video/${filename}`;
-                            document.getElementById('videoPreview').src = videoUrl;
-                            document.getElementById('downloadLink').href = videoUrl;
-                            resultSection.classList.remove('hidden');
-                        }
-                    } else if (event.type === 'error') {
-                        progressFill.style.width = '0%';
-                        statusText.textContent = 'Generation failed.';
-                        errorMsg.textContent = event.message;
-                        errorMsg.classList.remove('hidden');
-                        evtSource.close();
-                        btn.disabled = false;
-                        btn.textContent = 'Retry';
-                    }
-                };
-
-                evtSource.onerror = () => {
-                    statusText.textContent = 'Connection lost.';
-                    evtSource.close();
-                    btn.disabled = false;
-                    btn.textContent = 'Retry';
-                };
+                localStorage.setItem('active_script_job_id', data.job_id);
+                streamJob(data.job_id);
 
             } catch (err) {
-                errorMsg.textContent = 'Request failed: ' + err.message;
-                errorMsg.classList.remove('hidden');
-                btn.disabled = false;
-                btn.textContent = 'Generate Avatar Video';
-                progressSection.classList.add('hidden');
+                showError('Request failed: ' + err.message);
+                document.getElementById('progressSection').classList.add('hidden');
             }
         }
+
+        // ── Init: recover state on page load ──
+        async function init() {
+            // Check localStorage for an active job
+            const savedJobId = localStorage.getItem('active_script_job_id');
+            if (savedJobId) {
+                try {
+                    const res = await fetch(`/script-job/${savedJobId}`);
+                    const job = await res.json();
+                    if (job.status === 'completed' && job.video_filename) {
+                        showResult(job.video_filename);
+                        localStorage.removeItem('active_script_job_id');
+                        return;
+                    } else if (job.status === 'running') {
+                        streamJob(savedJobId);
+                        return;
+                    } else if (job.status === 'failed') {
+                        showError(job.error || 'Generation failed.');
+                        localStorage.removeItem('active_script_job_id');
+                        return;
+                    }
+                } catch (_) {}
+                localStorage.removeItem('active_script_job_id');
+                return;
+            }
+            // No saved job — check if there's a recent completed job
+            try {
+                const res = await fetch('/script-job/latest');
+                const job = await res.json();
+                if (job.status === 'running' && job.job_id) {
+                    localStorage.setItem('active_script_job_id', job.job_id);
+                    streamJob(job.job_id);
+                } else if (job.status === 'completed' && job.video_filename) {
+                    showResult(job.video_filename);
+                }
+            } catch (_) {}
+        }
+
+        init();
     </script>
 </body>
 </html>

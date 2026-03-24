@@ -1066,6 +1066,42 @@
             color: #4fc3f7;
             background: #141922;
         }
+        .close-tab-banner {
+            margin-top: 16px;
+            padding: 12px 16px;
+            background: #0d1925;
+            border: 1px solid #1e3a4a;
+            border-radius: 8px;
+            color: #4fc3f7;
+            font-size: 13px;
+            display: none;
+            align-items: center;
+            gap: 8px;
+        }
+        .close-tab-banner .dismiss {
+            margin-left: auto;
+            background: none;
+            border: none;
+            color: #4a5568;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .close-tab-banner .dismiss:hover { color: #c5cdd8; }
+        .badge-processing {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            background: #0d1925;
+            color: #4fc3f7;
+            animation: pulse-proc 1.5s ease-in-out infinite;
+        }
+        @keyframes pulse-proc {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
     </style>
 </head>
 <body>
@@ -1255,6 +1291,10 @@
                 <div id="heygenBrowserSegments" class="hidden" style="margin-top:16px;"></div>
                 <div class="assembly-progress-bar hidden mt-12" id="heygenBrowserBar"><div class="bar-fill" id="heygenBrowserBarFill"></div></div>
                 <div class="assembly-eta hidden" id="heygenBrowserStatus"></div>
+                <div class="close-tab-banner" id="closeTabBanner">
+                    <span>You can close this tab safely. Check progress on the Dashboard anytime.</span>
+                    <button class="dismiss" onclick="document.getElementById('closeTabBanner').style.display='none'">&times;</button>
+                </div>
                 <div id="heygenBrowserProgress" class="progress-log hidden mt-12" style="display:none;"></div>
             </div>
 
@@ -1428,6 +1468,33 @@
         let currentStep = 1;
         let highestStep = 1;
         let stepData = {}; // Store summaries for completed steps
+
+        // ── connectSSE: auto-reconnect with exponential backoff ──────────
+        function connectSSE(url, handlers) {
+            let retries = 0;
+            const maxRetries = 5;
+            const maxDelay = 15000;
+            let es = null;
+            function connect() {
+                es = new EventSource(url);
+                es.onmessage = (e) => {
+                    retries = 0;
+                    if (handlers.onMessage) handlers.onMessage(e);
+                };
+                es.onerror = () => {
+                    es.close();
+                    if (retries < maxRetries) {
+                        const delay = Math.min(1000 * Math.pow(2, retries), maxDelay);
+                        retries++;
+                        setTimeout(connect, delay);
+                    } else {
+                        if (handlers.onError) handlers.onError();
+                    }
+                };
+            }
+            connect();
+            return { close: () => { retries = maxRetries; if (es) es.close(); } };
+        }
 
         // ── Funny loading lines ──────────────────────────────────────────
         const funnyLoadingLines = {
@@ -1972,6 +2039,7 @@
                                     <div class="project-card-title">${s.title || 'Untitled'}</div>
                                     <div class="project-card-meta">
                                         <span class="project-card-step">${stepLabel}</span>
+                                        ${s.has_active_job ? '<span class="badge-processing">Processing...</span>' : ''}
                                         <span>${s.channel || ''}</span>
                                         <span>${timeAgo(s.updated_at)}</span>
                                     </div>
@@ -2241,6 +2309,58 @@
                 updateStepper();
                 showActivePanel();
                 saveSession();
+
+                // Check for active running job and reconnect
+                try {
+                    const ajRes = await fetch(`/session/${sid}/active-job`);
+                    const aj = await ajRes.json();
+                    if (aj.status === 'running' && aj.job_id) {
+                        // Reconnect to the running stream
+                        const hgBar = document.getElementById('heygenBrowserBar');
+                        const hgBarFill = document.getElementById('heygenBrowserBarFill');
+                        const hgStatus = document.getElementById('heygenBrowserStatus');
+                        const btn = document.getElementById('btnHeyGenBrowser');
+                        if (hgBar) hgBar.classList.remove('hidden');
+                        if (hgStatus) { hgStatus.classList.remove('hidden'); hgStatus.textContent = 'Reconnecting to running job...'; }
+                        if (btn) { btn.disabled = true; btn.textContent = 'Generating...'; }
+                        document.getElementById('closeTabBanner').style.display = 'flex';
+                        setVOMode('heygen_browser');
+
+                        let hgMsgCount = 0;
+                        connectSSE(`/stream/${aj.job_id}`, {
+                            onMessage: (e) => {
+                                const event = JSON.parse(e.data);
+                                if (event.type === 'progress') {
+                                    hgMsgCount++;
+                                    const pct = Math.min(5 + Math.round(hgMsgCount * 2), 90);
+                                    if (hgBarFill) hgBarFill.style.width = pct + '%';
+                                    const avatarLines = funnyLoadingLines.avatar;
+                                    if (hgStatus) hgStatus.textContent = avatarLines[hgMsgCount % avatarLines.length];
+                                } else if (event.type === 'done') {
+                                    const result = event.data;
+                                    if (hgBarFill) hgBarFill.style.width = '100%';
+                                    if (hgStatus) hgStatus.textContent = `Done! ${result.successful}/${result.total} segments generated.`;
+                                    if (btn) { btn.textContent = result.failed > 0 ? 'Retry Failed Segments' : 'Regenerate Avatar'; btn.disabled = false; }
+                                    document.getElementById('btnAssemble').disabled = false;
+                                    document.getElementById('btnAssemble').title = '';
+                                    document.getElementById('closeTabBanner').style.display = 'none';
+                                } else if (event.type === 'error') {
+                                    if (hgStatus) hgStatus.textContent = event.message;
+                                    if (hgBarFill) hgBarFill.style.width = '0%';
+                                    if (btn) { btn.textContent = 'Retry Avatar'; btn.disabled = false; }
+                                    document.getElementById('closeTabBanner').style.display = 'none';
+                                }
+                            },
+                            onError: () => {
+                                if (hgStatus) hgStatus.textContent = 'Connection lost. Check Dashboard for results.';
+                                if (btn) { btn.disabled = false; btn.textContent = 'Retry Avatar'; }
+                                document.getElementById('closeTabBanner').style.display = 'none';
+                            },
+                        });
+                        showToast('Reconnected to running job', 'success');
+                        return;
+                    }
+                } catch (_) {}
 
                 showToast('Project restored', 'success');
             } catch (e) {
@@ -2944,49 +3064,53 @@
                 // Store job_id for /logs page
                 localStorage.setItem('active_job_id', data.job_id);
 
-                const evtSource = new EventSource(`/stream/${data.job_id}`);
-                evtSource.onmessage = (e) => {
-                    const event = JSON.parse(e.data);
-                    if (event.type === 'progress') {
-                        // Count segments for progress bar
-                        if (event.message && event.message.match(/saved|generated|ready/i)) ttsSegCount++;
-                        const pct = Math.min(Math.round((ttsSegCount / ttsTotal) * 100), 95);
-                        ttsBarFill.style.width = pct + '%';
-                        ttsStatus.textContent = `Generating voiceovers... (${ttsSegCount}/${ttsTotal})`;
-                    } else if (event.type === 'done') {
-                        ttsBarFill.style.width = '100%';
-                        ttsStatus.textContent = 'All voiceovers generated!';
-                        evtSource.close();
-                        btn.disabled = false;
-                        btn.textContent = 'Regenerate All TTS';
-                        voGenerated = true;
-                        document.getElementById('btnAssemble').disabled = false;
-                        document.getElementById('btnAssemble').title = '';
+                const ttsSSE = connectSSE(`/stream/${data.job_id}`, {
+                    onMessage: (e) => {
+                        const event = JSON.parse(e.data);
+                        if (event.type === 'progress') {
+                            if (event.message && event.message.match(/saved|generated|ready/i)) ttsSegCount++;
+                            const pct = Math.min(Math.round((ttsSegCount / ttsTotal) * 100), 95);
+                            ttsBarFill.style.width = pct + '%';
+                            ttsStatus.textContent = `Generating voiceovers... (${ttsSegCount}/${ttsTotal})`;
+                        } else if (event.type === 'done') {
+                            ttsBarFill.style.width = '100%';
+                            ttsStatus.textContent = 'All voiceovers generated!';
+                            ttsSSE.close();
+                            btn.disabled = false;
+                            btn.textContent = 'Regenerate All TTS';
+                            voGenerated = true;
+                            document.getElementById('btnAssemble').disabled = false;
+                            document.getElementById('btnAssemble').title = '';
 
-                        document.getElementById('voSegmentList').classList.remove('hidden');
-                        if (event.data && event.data.voiceover_segments) {
-                            for (const vs of event.data.voiceover_segments) {
-                                markVOReady(vs.segment_id, vs.duration_sec);
+                            document.getElementById('voSegmentList').classList.remove('hidden');
+                            if (event.data && event.data.voiceover_segments) {
+                                for (const vs of event.data.voiceover_segments) {
+                                    markVOReady(vs.segment_id, vs.duration_sec);
+                                }
+                            } else {
+                                document.querySelectorAll('[id^="vo_status_"]').forEach(el => {
+                                    el.textContent = 'Ready';
+                                    el.className = 'vo-status ready';
+                                });
+                                document.querySelectorAll('[id^="vo_play_"]').forEach(el => {
+                                    el.style.display = 'flex';
+                                });
                             }
-                        } else {
-                            document.querySelectorAll('[id^="vo_status_"]').forEach(el => {
-                                el.textContent = 'Ready';
-                                el.className = 'vo-status ready';
-                            });
-                            // Show all preview buttons
-                            document.querySelectorAll('[id^="vo_play_"]').forEach(el => {
-                                el.style.display = 'flex';
-                            });
+                            showToast('All voiceovers generated', 'success');
+                        } else if (event.type === 'error') {
+                            progressDiv.innerHTML += `<div class="msg error">${event.message}</div>`;
+                            ttsSSE.close();
+                            btn.disabled = false;
+                            btn.textContent = 'Retry TTS';
+                            showToast('TTS generation failed', 'error');
                         }
-                        showToast('All voiceovers generated', 'success');
-                    } else if (event.type === 'error') {
-                        progressDiv.innerHTML += `<div class="msg error">${event.message}</div>`;
-                        evtSource.close();
+                    },
+                    onError: () => {
                         btn.disabled = false;
                         btn.textContent = 'Retry TTS';
-                        showToast('TTS generation failed', 'error');
-                    }
-                };
+                        showToast('Connection lost', 'error');
+                    },
+                });
             } catch (e) {
                 showToast('Error: ' + e.message, 'error');
                 btn.disabled = false;
@@ -3125,50 +3249,50 @@
 
                 localStorage.setItem('active_job_id', data.job_id);
                 const totalSegments = currentScript?.segments?.length || 10;
-                const evtSource = new EventSource(`/stream/${data.job_id}`);
-                evtSource.onmessage = (e) => {
-                    const event = JSON.parse(e.data);
-                    if (event.type === 'progress') {
-                        assemblyMsgCount++;
-                        progressDiv.innerHTML += `<div class="msg">${event.message}</div>`;
-                        progressDiv.scrollTop = progressDiv.scrollHeight;
+                const asmSSE = connectSSE(`/stream/${data.job_id}`, {
+                    onMessage: (e) => {
+                        const event = JSON.parse(e.data);
+                        if (event.type === 'progress') {
+                            assemblyMsgCount++;
+                            progressDiv.innerHTML += `<div class="msg">${event.message}</div>`;
+                            progressDiv.scrollTop = progressDiv.scrollHeight;
+                            if (event.pct !== undefined) {
+                                document.getElementById('assemblyBarFill').style.width = event.pct + '%';
+                            } else {
+                                const estTotal = totalSegments * 3 + 5;
+                                const pct = Math.min(95, Math.round((assemblyMsgCount / estTotal) * 100));
+                                document.getElementById('assemblyBarFill').style.width = pct + '%';
+                            }
+                            const assemblyLines = funnyLoadingLines.assembly;
+                            document.getElementById('assemblyEta').textContent = assemblyLines[assemblyMsgCount % assemblyLines.length];
+                        } else if (event.type === 'done') {
+                            document.getElementById('assemblyBarFill').style.width = '100%';
+                            document.getElementById('assemblyEta').textContent = 'Complete!';
+                            progressDiv.innerHTML += `<div class="msg done">Video assembled successfully!</div>`;
+                            asmSSE.close();
 
-                        // Use real percentage from backend if available
-                        if (event.pct !== undefined) {
-                            document.getElementById('assemblyBarFill').style.width = event.pct + '%';
-                        } else {
-                            const estTotal = totalSegments * 3 + 5;
-                            const pct = Math.min(95, Math.round((assemblyMsgCount / estTotal) * 100));
-                            document.getElementById('assemblyBarFill').style.width = pct + '%';
+                            const resultDiv = document.getElementById('videoResult');
+                            resultDiv.classList.remove('hidden');
+                            const videoUrl = `/video/${event.video}?t=${Date.now()}`;
+                            document.getElementById('finalVideo').src = videoUrl;
+                            document.getElementById('downloadLink').href = videoUrl;
+                            showToast('Video assembled!', 'success');
+
+                            stepData[6] = { title: 'Step 6: Video', detail: event.video };
+                            updateStepper();
+                        } else if (event.type === 'error') {
+                            document.getElementById('assemblyBarFill').style.width = '0%';
+                            document.getElementById('assemblyEta').textContent = 'Failed';
+                            progressDiv.innerHTML += `<div class="msg error">${event.message}</div>`;
+                            asmSSE.close();
+                            showToast('Assembly failed: ' + event.message, 'error');
                         }
-
-                        // Show funny line
-                        const assemblyLines = funnyLoadingLines.assembly;
-                        document.getElementById('assemblyEta').textContent = assemblyLines[assemblyMsgCount % assemblyLines.length];
-                    } else if (event.type === 'done') {
-                        document.getElementById('assemblyBarFill').style.width = '100%';
-                        document.getElementById('assemblyEta').textContent = 'Complete!';
-                        progressDiv.innerHTML += `<div class="msg done">Video assembled successfully!</div>`;
-                        evtSource.close();
-
-                        const resultDiv = document.getElementById('videoResult');
-                        resultDiv.classList.remove('hidden');
-                        const videoUrl = `/video/${event.video}?t=${Date.now()}`;
-                        document.getElementById('finalVideo').src = videoUrl;
-                        document.getElementById('downloadLink').href = videoUrl;
-                        showToast('Video assembled!', 'success');
-
-                        // Update stepper
-                        stepData[6] = { title: 'Step 6: Video', detail: event.video };
-                        updateStepper();
-                    } else if (event.type === 'error') {
-                        document.getElementById('assemblyBarFill').style.width = '0%';
-                        document.getElementById('assemblyEta').textContent = 'Failed';
-                        progressDiv.innerHTML += `<div class="msg error">${event.message}</div>`;
-                        evtSource.close();
-                        showToast('Assembly failed: ' + event.message, 'error');
-                    }
-                };
+                    },
+                    onError: () => {
+                        document.getElementById('assemblyEta').textContent = 'Connection lost';
+                        showToast('Connection lost during assembly', 'error');
+                    },
+                });
             } catch (e) {
                 progressDiv.innerHTML += `<div class="msg error">Error: ${e.message}</div>`;
                 showToast('Error: ' + e.message, 'error');
@@ -3379,30 +3503,30 @@
                     } else {
                         // Stream progress
                         await new Promise((resolve) => {
-                            const evtSource = new EventSource(`/stream/${data.job_id}`);
-                            evtSource.onmessage = (e) => {
-                                const event = JSON.parse(e.data);
-                                if (event.type === 'progress') {
-                                    log(`[${i + 1}] ${event.message}`);
-                                } else if (event.type === 'done') {
-                                    item.status = 'done';
-                                    item.result = event.video;
-                                    log(`[${i + 1}] Done: ${event.video}`, 'done');
-                                    evtSource.close();
-                                    resolve();
-                                } else if (event.type === 'error') {
+                            const batchSSE = connectSSE(`/stream/${data.job_id}`, {
+                                onMessage: (e) => {
+                                    const event = JSON.parse(e.data);
+                                    if (event.type === 'progress') {
+                                        log(`[${i + 1}] ${event.message}`);
+                                    } else if (event.type === 'done') {
+                                        item.status = 'done';
+                                        item.result = event.video;
+                                        log(`[${i + 1}] Done: ${event.video}`, 'done');
+                                        batchSSE.close();
+                                        resolve();
+                                    } else if (event.type === 'error') {
+                                        item.status = 'failed';
+                                        log(`[${i + 1}] Error: ${event.message}`, 'error');
+                                        batchSSE.close();
+                                        resolve();
+                                    }
+                                },
+                                onError: () => {
                                     item.status = 'failed';
-                                    log(`[${i + 1}] Error: ${event.message}`, 'error');
-                                    evtSource.close();
+                                    log(`[${i + 1}] Connection lost`, 'error');
                                     resolve();
-                                }
-                            };
-                            evtSource.onerror = () => {
-                                item.status = 'failed';
-                                log(`[${i + 1}] Connection lost`, 'error');
-                                evtSource.close();
-                                resolve();
-                            };
+                                },
+                            });
                         });
                     }
                 } catch (e) {
@@ -3536,25 +3660,31 @@
             }
 
             // Stream progress
-            const evtSource = new EventSource(`/stream/${data.job_id}`);
-            evtSource.onmessage = (e) => {
-                const event = JSON.parse(e.data);
-                if (event.type === 'progress') {
-                    progressDiv.innerHTML += `<div class="msg">${event.message}</div>`;
-                    progressDiv.scrollTop = progressDiv.scrollHeight;
-                } else if (event.type === 'done') {
-                    const result = event.data;
-                    progressDiv.innerHTML += `<div class="msg done">Done! ${result.successful}/${result.total} segments generated.</div>`;
-                    btn.textContent = 'Regenerate Avatar Videos';
+            const hgApiSSE = connectSSE(`/stream/${data.job_id}`, {
+                onMessage: (e) => {
+                    const event = JSON.parse(e.data);
+                    if (event.type === 'progress') {
+                        progressDiv.innerHTML += `<div class="msg">${event.message}</div>`;
+                        progressDiv.scrollTop = progressDiv.scrollHeight;
+                    } else if (event.type === 'done') {
+                        const result = event.data;
+                        progressDiv.innerHTML += `<div class="msg done">Done! ${result.successful}/${result.total} segments generated.</div>`;
+                        btn.textContent = 'Regenerate Avatar Videos';
+                        btn.disabled = false;
+                        hgApiSSE.close();
+                    } else if (event.type === 'error') {
+                        progressDiv.innerHTML += `<div class="msg error">${event.message}</div>`;
+                        btn.textContent = 'Generate Avatar Videos';
+                        btn.disabled = false;
+                        hgApiSSE.close();
+                    }
+                },
+                onError: () => {
+                    progressDiv.innerHTML += `<div class="msg error">Connection lost</div>`;
                     btn.disabled = false;
-                    evtSource.close();
-                } else if (event.type === 'error') {
-                    progressDiv.innerHTML += `<div class="msg error">${event.message}</div>`;
                     btn.textContent = 'Generate Avatar Videos';
-                    btn.disabled = false;
-                    evtSource.close();
-                }
-            };
+                },
+            });
         }
 
         async function generateHeyGenBrowser() {
@@ -3589,37 +3719,46 @@
             }
 
             localStorage.setItem('active_job_id', data.job_id);
+            document.getElementById('closeTabBanner').style.display = 'flex';
 
-            const evtSource = new EventSource(`/stream/${data.job_id}`);
             let hgMsgCount = 0;
-            evtSource.onmessage = (e) => {
-                const event = JSON.parse(e.data);
-                if (event.type === 'progress') {
-                    hgMsgCount++;
-                    // Estimate progress: ramp from 5% to 90% over messages
-                    const pct = Math.min(5 + Math.round(hgMsgCount * 2), 90);
-                    hgBarFill.style.width = pct + '%';
-                    const avatarLines = funnyLoadingLines.avatar;
-                    hgStatus.textContent = avatarLines[hgMsgCount % avatarLines.length];
-                } else if (event.type === 'segment_complete') {
-                    // Individual segment split completed
-                } else if (event.type === 'done') {
-                    const result = event.data;
-                    hgBarFill.style.width = '100%';
-                    hgStatus.textContent = `Done! ${result.successful}/${result.total} segments generated.`;
-                    btn.textContent = result.failed > 0 ? 'Retry Failed Segments' : 'Regenerate Avatar';
+            const hgBrowserSSE = connectSSE(`/stream/${data.job_id}`, {
+                onMessage: (e) => {
+                    const event = JSON.parse(e.data);
+                    if (event.type === 'progress') {
+                        hgMsgCount++;
+                        const pct = Math.min(5 + Math.round(hgMsgCount * 2), 90);
+                        hgBarFill.style.width = pct + '%';
+                        const avatarLines = funnyLoadingLines.avatar;
+                        hgStatus.textContent = avatarLines[hgMsgCount % avatarLines.length];
+                    } else if (event.type === 'segment_complete') {
+                        // Individual segment split completed
+                    } else if (event.type === 'done') {
+                        const result = event.data;
+                        hgBarFill.style.width = '100%';
+                        hgStatus.textContent = `Done! ${result.successful}/${result.total} segments generated.`;
+                        btn.textContent = result.failed > 0 ? 'Retry Failed Segments' : 'Regenerate Avatar';
+                        btn.disabled = false;
+                        document.getElementById('btnAssemble').disabled = false;
+                        document.getElementById('btnAssemble').title = '';
+                        document.getElementById('closeTabBanner').style.display = 'none';
+                        hgBrowserSSE.close();
+                    } else if (event.type === 'error') {
+                        hgStatus.textContent = event.message;
+                        hgBarFill.style.width = '0%';
+                        btn.textContent = 'Retry Avatar';
+                        btn.disabled = false;
+                        document.getElementById('closeTabBanner').style.display = 'none';
+                        hgBrowserSSE.close();
+                    }
+                },
+                onError: () => {
+                    hgStatus.textContent = 'Connection lost. Check Dashboard for results.';
                     btn.disabled = false;
-                    document.getElementById('btnAssemble').disabled = false;
-                    document.getElementById('btnAssemble').title = '';
-                    evtSource.close();
-                } else if (event.type === 'error') {
-                    hgStatus.textContent = event.message;
-                    hgBarFill.style.width = '0%';
                     btn.textContent = 'Retry Avatar';
-                    btn.disabled = false;
-                    evtSource.close();
-                }
-            };
+                    document.getElementById('closeTabBanner').style.display = 'none';
+                },
+            });
         }
 
         function startOver() {

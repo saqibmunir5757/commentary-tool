@@ -35,6 +35,28 @@ from ai33_tts import list_voices as ai33_list_voices, search_voices as ai33_sear
 app = FastAPI(title="Commentary Video Tool")
 executor = ThreadPoolExecutor(max_workers=2)
 
+
+@app.on_event("startup")
+async def cleanup_stale_jobs():
+    """Mark any 'running' script jobs as failed on server startup."""
+    if not os.path.exists(SCRIPT_JOBS_DIR):
+        return
+    for fname in os.listdir(SCRIPT_JOBS_DIR):
+        if not fname.endswith(".json"):
+            continue
+        path = os.path.join(SCRIPT_JOBS_DIR, fname)
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            if data.get("status") == "running":
+                data["status"] = "failed"
+                data["error"] = "Server restarted during generation"
+                data["completed_at"] = time.time()
+                with open(path, "w") as f:
+                    json.dump(data, f, default=str)
+        except Exception:
+            continue
+
 # In-memory job store
 jobs: dict = {}
 
@@ -46,6 +68,23 @@ sessions: dict = {}
 
 SESSIONS_DIR = os.path.join(OUTPUT_DIR, "sessions")
 os.makedirs(SESSIONS_DIR, exist_ok=True)
+
+SCRIPT_JOBS_DIR = os.path.join(OUTPUT_DIR, "script_jobs")
+os.makedirs(SCRIPT_JOBS_DIR, exist_ok=True)
+
+
+def _save_script_job(job_id: str, data: dict):
+    path = os.path.join(SCRIPT_JOBS_DIR, f"{job_id}.json")
+    with open(path, "w") as f:
+        json.dump(data, f, default=str)
+
+
+def _load_script_job(job_id: str) -> dict | None:
+    path = os.path.join(SCRIPT_JOBS_DIR, f"{job_id}.json")
+    if os.path.exists(path):
+        with open(path) as f:
+            return json.load(f)
+    return None
 
 # Track which session has a running job to prevent double-clicks
 _session_jobs: dict = {}  # session_id -> job_id
@@ -214,6 +253,14 @@ async def gen_script_video(script_text: str = Form(...)):
     job_id = str(uuid.uuid4())[:8]
     jobs[job_id] = {"status": "running", "queue": Queue(), "result": None, "error": None}
 
+    # Persist job metadata to disk
+    _save_script_job(job_id, {
+        "job_id": job_id,
+        "status": "running",
+        "script_preview": script_text.strip()[:200],
+        "created_at": time.time(),
+    })
+
     def _run():
         q = jobs[job_id]["queue"]
         try:
@@ -238,14 +285,31 @@ async def gen_script_video(script_text: str = Form(...)):
 
                 jobs[job_id]["result"] = result
                 jobs[job_id]["status"] = "completed"
-                q.put({"type": "done", "video_path": serve_path})
+                _save_script_job(job_id, {
+                    "job_id": job_id, "status": "completed",
+                    "video_filename": filename,
+                    "created_at": _load_script_job(job_id).get("created_at"),
+                    "completed_at": time.time(),
+                })
+                q.put({"type": "done", "video_path": serve_path, "video_filename": filename})
             else:
+                err = result.get("error", "Unknown error")
                 jobs[job_id]["status"] = "failed"
-                jobs[job_id]["error"] = result.get("error", "Unknown error")
-                q.put({"type": "error", "message": result.get("error", "Unknown error")})
+                jobs[job_id]["error"] = err
+                _save_script_job(job_id, {
+                    "job_id": job_id, "status": "failed", "error": err,
+                    "created_at": _load_script_job(job_id).get("created_at"),
+                    "completed_at": time.time(),
+                })
+                q.put({"type": "error", "message": err})
         except Exception as e:
             jobs[job_id]["status"] = "failed"
             jobs[job_id]["error"] = str(e)
+            _save_script_job(job_id, {
+                "job_id": job_id, "status": "failed", "error": str(e),
+                "created_at": (_load_script_job(job_id) or {}).get("created_at"),
+                "completed_at": time.time(),
+            })
             q.put({"type": "error", "message": str(e)})
 
     executor.submit(_run)
@@ -267,19 +331,76 @@ async def script_history_page():
 
 @app.get("/script-video-list")
 async def script_video_list():
-    """List all generated script videos with metadata."""
+    """List all generated script videos + running jobs with metadata."""
     videos = []
+    # Completed videos from disk
     if os.path.exists(SCRIPT_VIDEO_DIR):
-        for f in sorted(os.listdir(SCRIPT_VIDEO_DIR)):
+        for f in sorted(os.listdir(SCRIPT_VIDEO_DIR), reverse=True):
             if f.endswith(".mp4"):
                 path = os.path.join(SCRIPT_VIDEO_DIR, f)
                 stat = os.stat(path)
                 videos.append({
                     "filename": f,
+                    "status": "completed",
                     "size_mb": round(stat.st_size / (1024 * 1024), 1),
                     "created": time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime)),
                 })
+    # Running jobs from disk metadata
+    if os.path.exists(SCRIPT_JOBS_DIR):
+        for fname in os.listdir(SCRIPT_JOBS_DIR):
+            if not fname.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(SCRIPT_JOBS_DIR, fname)) as f:
+                    data = json.load(f)
+                jid = data.get("job_id")
+                # Check RAM for actual running status
+                if jid and jid in jobs and jobs[jid]["status"] == "running":
+                    videos.insert(0, {
+                        "job_id": jid,
+                        "status": "processing",
+                        "script_preview": data.get("script_preview", ""),
+                        "created": time.strftime("%Y-%m-%d %H:%M", time.localtime(data.get("created_at", 0))),
+                    })
+            except Exception:
+                continue
     return {"videos": videos}
+
+
+@app.get("/script-job/latest")
+async def latest_script_job():
+    """Return the most recent script job (for page-load recovery)."""
+    latest = None
+    for fname in os.listdir(SCRIPT_JOBS_DIR):
+        if not fname.endswith(".json"):
+            continue
+        path = os.path.join(SCRIPT_JOBS_DIR, fname)
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            if not latest or data.get("created_at", 0) > latest.get("created_at", 0):
+                latest = data
+        except Exception:
+            continue
+    if not latest:
+        return {"status": "none"}
+    # If RAM says running, trust RAM
+    jid = latest.get("job_id")
+    if jid and jid in jobs and jobs[jid]["status"] == "running":
+        latest["status"] = "running"
+    return latest
+
+
+@app.get("/script-job/{job_id}")
+async def get_script_job(job_id: str):
+    """Get script job status. Check RAM first (for running jobs), then disk."""
+    job = jobs.get(job_id)
+    if job:
+        return {"job_id": job_id, "status": job["status"], "error": job.get("error")}
+    disk = _load_script_job(job_id)
+    if disk:
+        return disk
+    return {"status": "not_found"}
 
 
 # ── Session Management ───────────────────────────────────────────────────────
@@ -307,6 +428,10 @@ async def list_sessions():
                 "created_at": data.get("created_at", 0),
                 "updated_at": data.get("updated_at", 0),
                 "final_video": data.get("final_video"),
+                "has_active_job": bool(
+                    _session_jobs.get(sid) and
+                    jobs.get(_session_jobs.get(sid), {}).get("status") == "running"
+                ),
             })
         except Exception:
             continue
@@ -1105,6 +1230,20 @@ async def job_status(job_id: str):
         "result": job.get("result"),
         "error": job.get("error"),
     }
+
+
+@app.get("/session/{session_id}/active-job")
+async def session_active_job(session_id: str):
+    """Check if this session has a currently running job."""
+    job_id = _session_jobs.get(session_id)
+    if job_id:
+        job = jobs.get(job_id)
+        if job and job["status"] == "running":
+            return {"job_id": job_id, "status": "running"}
+        elif job:
+            return {"job_id": job_id, "status": job["status"],
+                    "result": job.get("result"), "error": job.get("error")}
+    return {"status": "none"}
 
 
 # ── Voiceover audio serving ──────────────────────────────────────────────────

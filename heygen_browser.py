@@ -424,10 +424,15 @@ def _add_all_scenes(page, vo_segments, progress=None, add_pauses=True):
         text_filled = False
 
         if i == 0:
-            # Scene 1: text box is already active, just type directly
+            # Scene 1: click the contenteditable div to focus it, then type
+            scene1_xpath = '/html/body/div/div/div/div[3]/div[2]/div[4]/div[1]/div[1]/div[2]/div/div/div[2]/div/div/div[2]/div'
             try:
-                page.keyboard.insert_text(vo_text)
-                text_filled = True
+                target = page.locator(f'xpath={scene1_xpath}').first
+                if target.is_visible(timeout=5000):
+                    target.click()
+                    page.wait_for_timeout(500)
+                    page.keyboard.insert_text(vo_text)
+                    text_filled = True
             except Exception:
                 pass
         else:
@@ -1251,7 +1256,7 @@ def generate_single_video_browser_sync(
 
         context = p.chromium.launch_persistent_context(
             user_data_dir=BROWSER_PROFILE_DIR,
-            headless=True,
+            headless=False,  # TODO: set back to True before deploying
             accept_downloads=True,
             args=[
                 "--disable-blink-features=AutomationControlled",

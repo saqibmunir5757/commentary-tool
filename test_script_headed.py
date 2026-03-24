@@ -157,11 +157,16 @@ def main():
             filled = False
 
             if i == 0:
-                # Scene 1: text box is already active, just type directly
+                # Scene 1: click the contenteditable div to focus it, then type
+                scene1_xpath = '/html/body/div/div/div/div[3]/div[2]/div[4]/div[1]/div[1]/div[2]/div/div/div[2]/div/div/div[2]/div'
                 try:
-                    page.keyboard.insert_text(vo_text)
-                    filled = True
-                    log("  Scene 1: typed directly")
+                    target = page.locator(f'xpath={scene1_xpath}').first
+                    if target.is_visible(timeout=5000):
+                        target.click()
+                        page.wait_for_timeout(500)
+                        page.keyboard.insert_text(vo_text)
+                        filled = True
+                        log("  Scene 1: clicked xpath + typed")
                 except Exception as e:
                     log(f"  Scene 1 FAILED: {e}")
             else:
