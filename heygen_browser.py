@@ -401,12 +401,12 @@ def _click_pause_button(page, progress=None):
     return clicked
 
 
-def _add_all_scenes(page, vo_segments, progress=None):
+def _add_all_scenes(page, vo_segments, progress=None, add_pauses=True):
     """
     Add all voiceover paragraphs as scenes in AI Studio.
     For each segment:
       1. Paste vo_text into the current scene's text input
-      2. Click pause button 2 times (adds ~1s silence break)
+      2. Click pause button 2 times (adds ~1s silence break) — only if add_pauses=True
       3. If not last segment, click "Add Scene"
     """
     total = len(vo_segments)
@@ -452,17 +452,18 @@ def _add_all_scenes(page, vo_segments, progress=None):
         page.wait_for_timeout(1000)
 
         # Step 2: Click pause button 2 times (adds ~1s silence break after this scene)
-        for click_num in range(2):
-            success = _click_pause_button(page, progress)
-            if success:
-                page.wait_for_timeout(500)
-            else:
-                if progress:
-                    progress(f"  WARNING: Pause click {click_num+1} failed for scene {i+1}")
-                page.wait_for_timeout(300)
+        if add_pauses:
+            for click_num in range(2):
+                success = _click_pause_button(page, progress)
+                if success:
+                    page.wait_for_timeout(500)
+                else:
+                    if progress:
+                        progress(f"  WARNING: Pause click {click_num+1} failed for scene {i+1}")
+                    page.wait_for_timeout(300)
 
-        if progress:
-            progress(f"  Added pause for scene {i+1}")
+            if progress:
+                progress(f"  Added pause for scene {i+1}")
 
         # Step 3: Click "Add Scene" if not the last segment
         # After clicking, the new scene's textarea is already active — just paste next time
@@ -1270,8 +1271,8 @@ def generate_single_video_browser_sync(
                 context.close()
                 return {"success": False, "video_path": None, "error": "Failed to open HeyGen AI Studio"}
 
-            # 2. Add each paragraph as a separate scene (reuses commentary flow)
-            _add_all_scenes(page, vo_segments, progress)
+            # 2. Add each paragraph as a separate scene (no pauses for script tool)
+            _add_all_scenes(page, vo_segments, progress, add_pauses=False)
 
             progress("All scenes added successfully")
             page.wait_for_timeout(1000)

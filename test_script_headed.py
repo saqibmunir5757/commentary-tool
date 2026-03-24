@@ -183,27 +183,6 @@ def main():
             step += 1
             take_screenshot(page, f"step_{step:02d}_scene_{i+1}_filled")
 
-            # Pause button x2
-            for _ in range(2):
-                page.evaluate("""() => {
-                    const iconparks = document.querySelectorAll('iconpark-icon');
-                    for (const ip of iconparks) {
-                        const sr = ip.shadowRoot;
-                        if (!sr) continue;
-                        for (const path of sr.querySelectorAll('svg path')) {
-                            const d = path.getAttribute('d') || '';
-                            if (d.startsWith('M7.515') || d.includes('4.036')) {
-                                const btn = ip.closest('button');
-                                if (btn) { btn.click(); return true; }
-                                ip.click(); return true;
-                            }
-                        }
-                    }
-                    return false;
-                }""")
-                page.wait_for_timeout(500)
-            log("  Pause added")
-
             # Add Scene (if not last)
             if not is_last:
                 add_clicked = False
