@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# System dependencies: ffmpeg, chromium deps for Playwright
+# System dependencies: ffmpeg, chromium deps for Playwright, Xvfb + noVNC for debug viewing
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     curl \
@@ -25,6 +25,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libx11-xcb1 \
     fonts-liberation \
     fonts-noto-cjk \
+    # noVNC debug viewer (remove after testing)
+    xvfb \
+    x11vnc \
+    novnc \
+    websockify \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -42,8 +47,10 @@ COPY . .
 # Create output directories
 RUN mkdir -p output/sessions output/clips output/voiceovers output/normalized output/heygen_clips
 
-# Expose the server port
-EXPOSE 8080
+# Expose the server port + noVNC port
+EXPOSE 8080 6080
 
-# Run the server
-CMD ["python", "server.py"]
+# Entrypoint: start Xvfb + x11vnc + noVNC, then run server
+COPY entrypoint.sh .
+RUN chmod +x entrypoint.sh
+CMD ["./entrypoint.sh"]
