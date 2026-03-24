@@ -28,8 +28,25 @@ HEYGEN_CLIPS_DIR = os.path.join(OUTPUT_DIR, "heygen_clips")
 os.makedirs(HEYGEN_CLIPS_DIR, exist_ok=True)
 
 BROWSER_PROFILE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".heygen_chrome_profile")
+HEYGEN_AUTH_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "heygen_auth.json")
 
 HEYGEN_TEMPLATES_URL = "https://app.heygen.com/avatar/templates?ct=private"
+
+
+def _load_auth_cookies(context):
+    """Load HeyGen cookies from heygen_auth.json into browser context."""
+    if not os.path.exists(HEYGEN_AUTH_JSON):
+        return False
+    try:
+        with open(HEYGEN_AUTH_JSON) as f:
+            data = json.load(f)
+        cookies = data.get("cookies", [])
+        if cookies:
+            context.add_cookies(cookies)
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def _file_md5(path):
@@ -1139,6 +1156,7 @@ def generate_all_segments_browser_sync(
             viewport={"width": 1920, "height": 1080},
             user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         )
+        _load_auth_cookies(context)
 
         page = context.pages[0] if context.pages else context.new_page()
 
@@ -1289,6 +1307,7 @@ def generate_single_video_browser_sync(
             viewport={"width": 1920, "height": 1080},
             user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         )
+        _load_auth_cookies(context)
 
         page = context.pages[0] if context.pages else context.new_page()
 
