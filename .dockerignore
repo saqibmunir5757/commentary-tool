@@ -4,6 +4,7 @@ __pycache__
 output/
 .heygen_chrome_profile/
 .heygen_browser_state/
+heygen_profile/
 test_download.py
 *.mp4
 *.mp3
