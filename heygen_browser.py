@@ -1105,7 +1105,7 @@ def generate_all_segments_browser_sync(
 
         context = p.chromium.launch_persistent_context(
             user_data_dir=BROWSER_PROFILE_DIR,
-            headless=False,  # noVNC testing — revert to True after
+            headless=True,
             accept_downloads=True,
             args=[
                 "--disable-blink-features=AutomationControlled",
@@ -1256,7 +1256,7 @@ def generate_single_video_browser_sync(
 
         context = p.chromium.launch_persistent_context(
             user_data_dir=BROWSER_PROFILE_DIR,
-            headless=False,  # noVNC testing — revert to True after
+            headless=True,
             accept_downloads=True,
             args=[
                 "--disable-blink-features=AutomationControlled",
