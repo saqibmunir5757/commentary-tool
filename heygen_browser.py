@@ -420,76 +420,29 @@ def _add_all_scenes(page, vo_segments, progress=None):
             preview = vo_text[:40].replace('\n', ' ')
             progress(f"Adding scene {i+1}/{total}: {preview}...")
 
-        # Step 1: Find and fill the text input for the current scene
+        # Step 1: Fill text into the scene's text area
         text_filled = False
 
-        # Fill the text into the current scene's script input.
-        # First scene: click the input to focus it, then fill.
-        # Subsequent scenes: after "Add scene", input is already focused — type directly.
-        try:
-            if i == 0:
-                # Try multiple element types — could be textarea, contenteditable, or input
-                input_found = False
-
-                # Try textarea
-                try:
-                    ta = page.locator('textarea').first
-                    if ta.is_visible(timeout=2000):
-                        ta.click()
-                        page.wait_for_timeout(300)
-                        ta.fill(vo_text)
-                        input_found = True
-                        text_filled = True
-                except Exception:
-                    pass
-
-                # Try contenteditable div
-                if not input_found:
-                    try:
-                        editable = page.locator('[contenteditable="true"]').first
-                        if editable.is_visible(timeout=2000):
-                            editable.click()
-                            page.wait_for_timeout(300)
-                            editable.fill(vo_text)
-                            input_found = True
-                            text_filled = True
-                    except Exception:
-                        pass
-
-                # Try clicking on the placeholder text area and typing
-                if not input_found:
-                    try:
-                        placeholder = page.locator('text="Type your script"').first
-                        if placeholder.is_visible(timeout=2000):
-                            placeholder.click()
-                            page.wait_for_timeout(500)
-                            page.keyboard.insert_text(vo_text)
-                            input_found = True
-                            text_filled = True
-                    except Exception:
-                        pass
-
-                # Last resort: click in the Script section area and type
-                if not input_found:
-                    try:
-                        # Find "Script" heading and click below it
-                        script_label = page.locator('text="Script"').first
-                        bb = script_label.bounding_box()
-                        if bb:
-                            # Click below the Script heading (where the text input is)
-                            page.mouse.click(bb["x"] + 100, bb["y"] + 80)
-                            page.wait_for_timeout(500)
-                            page.keyboard.insert_text(vo_text)
-                            text_filled = True
-                    except Exception:
-                        pass
-
-            else:
-                # New scene input is already focused — type directly
+        if i == 0:
+            # Scene 1: text box is already active, just type directly
+            try:
                 page.keyboard.insert_text(vo_text)
                 text_filled = True
-        except Exception:
-            pass
+            except Exception:
+                pass
+        else:
+            # Scene 2+: click by nth-child pattern (N = 5, 8, 11... = 2 + i*3)
+            nth = 2 + (i * 3)
+            selector = f'div.te-scriptpanel-redesign > div:nth-child(2) > div > div > div:nth-child({nth}) > div > div > div:nth-child(2) > div:nth-child(1) > div > span'
+            try:
+                target = page.locator(selector).first
+                if target.is_visible(timeout=3000):
+                    target.click()
+                    page.wait_for_timeout(500)
+                    page.keyboard.insert_text(vo_text)
+                    text_filled = True
+            except Exception:
+                pass
 
         if not text_filled:
             if progress:
