@@ -2326,7 +2326,9 @@
                         document.getElementById('closeTabBanner').style.display = 'flex';
                         setVOMode('heygen_browser');
 
-                        let hgMsgCount = 0;
+                        let hgMsgCount = aj.msg_count || 0;
+                        const initPct = Math.min(5 + Math.round(hgMsgCount * 2), 90);
+                        if (hgBarFill) hgBarFill.style.width = initPct + '%';
                         connectSSE(`/stream/${aj.job_id}`, {
                             onMessage: (e) => {
                                 const event = JSON.parse(e.data);

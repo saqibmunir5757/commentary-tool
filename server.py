@@ -251,7 +251,7 @@ async def gen_script_video(script_text: str = Form(...)):
         return {"error": "Script text is empty."}
 
     job_id = str(uuid.uuid4())[:8]
-    jobs[job_id] = {"status": "running", "queue": Queue(), "result": None, "error": None}
+    jobs[job_id] = {"status": "running", "queue": Queue(), "result": None, "error": None, "msg_count": 0, "terminal_event": None}
 
     # Persist job metadata to disk
     _save_script_job(job_id, {
@@ -270,6 +270,7 @@ async def gen_script_video(script_text: str = Form(...)):
                 if pct is not None:
                     event["pct"] = pct
                 q.put(event)
+                jobs[job_id]["msg_count"] += 1
 
             result = generate_single_video_browser_sync(
                 script_text=script_text,
@@ -295,7 +296,9 @@ async def gen_script_video(script_text: str = Form(...)):
                     "created_at": prev.get("created_at"),
                     "completed_at": time.time(),
                 })
-                q.put({"type": "done", "video_path": serve_path, "video_filename": filename})
+                te = {"type": "done", "video_path": serve_path, "video_filename": filename}
+                jobs[job_id]["terminal_event"] = te
+                q.put(te)
             else:
                 err = result.get("error", "Unknown error")
                 jobs[job_id]["status"] = "failed"
@@ -308,7 +311,9 @@ async def gen_script_video(script_text: str = Form(...)):
                     "created_at": prev.get("created_at"),
                     "completed_at": time.time(),
                 })
-                q.put({"type": "error", "message": err})
+                te = {"type": "error", "message": err}
+                jobs[job_id]["terminal_event"] = te
+                q.put(te)
         except Exception as e:
             jobs[job_id]["status"] = "failed"
             jobs[job_id]["error"] = str(e)
@@ -320,7 +325,9 @@ async def gen_script_video(script_text: str = Form(...)):
                 "created_at": prev.get("created_at"),
                 "completed_at": time.time(),
             })
-            q.put({"type": "error", "message": str(e)})
+            te = {"type": "error", "message": str(e)}
+            jobs[job_id]["terminal_event"] = te
+            q.put(te)
 
     executor.submit(_run)
     return {"job_id": job_id}
@@ -777,7 +784,7 @@ async def gen_voiceover(
         return running
 
     job_id = str(uuid.uuid4())[:8]
-    jobs[job_id] = {"status": "running", "queue": Queue(), "result": None, "error": None}
+    jobs[job_id] = {"status": "running", "queue": Queue(), "result": None, "error": None, "msg_count": 0, "terminal_event": None}
     _session_jobs[session_id] = job_id
 
     def _run():
@@ -788,6 +795,7 @@ async def gen_voiceover(
                 if pct is not None:
                     event["pct"] = pct
                 q.put(event)
+                jobs[job_id]["msg_count"] += 1
 
             dirs = ensure_session_dirs(session_id)
             vo_data = generate_tts_voiceovers(
@@ -801,14 +809,18 @@ async def gen_voiceover(
             _save_session(session_id)
             jobs[job_id]["result"] = vo_data
             jobs[job_id]["status"] = "completed"
-            q.put({"type": "done", "data": vo_data})
+            te = {"type": "done", "data": vo_data}
+            jobs[job_id]["terminal_event"] = te
+            q.put(te)
         except Exception as e:
             jobs[job_id]["status"] = "failed"
             jobs[job_id]["error"] = str(e)
             session["last_error"] = str(e)
             session["last_error_step"] = "voiceover"
             _save_session(session_id)
-            q.put({"type": "error", "message": str(e)})
+            te = {"type": "error", "message": str(e)}
+            jobs[job_id]["terminal_event"] = te
+            q.put(te)
 
     executor.submit(_run)
     return {"job_id": job_id}
@@ -961,7 +973,7 @@ async def assemble(session_id: str = Form(...), vo_mode: str = Form("tts"), tran
     use_subtitles = subtitles == "1"
 
     job_id = str(uuid.uuid4())[:8]
-    jobs[job_id] = {"status": "running", "queue": Queue(), "result": None, "error": None}
+    jobs[job_id] = {"status": "running", "queue": Queue(), "result": None, "error": None, "msg_count": 0, "terminal_event": None}
     _session_jobs[session_id] = job_id
 
     def _run():
@@ -972,6 +984,7 @@ async def assemble(session_id: str = Form(...), vo_mode: str = Form("tts"), tran
                 if pct is not None:
                     event["pct"] = pct
                 q.put(event)
+                jobs[job_id]["msg_count"] += 1
 
             # Diagnostic: log what data is being passed to pipeline
             _hd = session.get("heygen_data")
@@ -1007,21 +1020,27 @@ async def assemble(session_id: str = Form(...), vo_mode: str = Form("tts"), tran
                 _save_session(session_id)
                 jobs[job_id]["result"] = result
                 jobs[job_id]["status"] = "completed"
-                q.put({"type": "done", "video": video_rel})
+                te = {"type": "done", "video": video_rel}
+                jobs[job_id]["terminal_event"] = te
+                q.put(te)
             else:
                 jobs[job_id]["status"] = "failed"
                 jobs[job_id]["error"] = "Assembly failed"
                 session["last_error"] = "Assembly failed"
                 session["last_error_step"] = "assembly"
                 _save_session(session_id)
-                q.put({"type": "error", "message": "Assembly failed"})
+                te = {"type": "error", "message": "Assembly failed"}
+                jobs[job_id]["terminal_event"] = te
+                q.put(te)
         except Exception as e:
             jobs[job_id]["status"] = "failed"
             jobs[job_id]["error"] = str(e)
             session["last_error"] = str(e)
             session["last_error_step"] = "assembly"
             _save_session(session_id)
-            q.put({"type": "error", "message": str(e)})
+            te = {"type": "error", "message": str(e)}
+            jobs[job_id]["terminal_event"] = te
+            q.put(te)
 
     executor.submit(_run)
     return {"job_id": job_id}
@@ -1065,7 +1084,7 @@ async def gen_heygen(
         return running
 
     job_id = str(uuid.uuid4())[:8]
-    jobs[job_id] = {"status": "running", "queue": Queue(), "result": None, "error": None}
+    jobs[job_id] = {"status": "running", "queue": Queue(), "result": None, "error": None, "msg_count": 0, "terminal_event": None}
     _session_jobs[session_id] = job_id
 
     def _run():
@@ -1076,6 +1095,7 @@ async def gen_heygen(
                 if pct is not None:
                     event["pct"] = pct
                 q.put(event)
+                jobs[job_id]["msg_count"] += 1
 
             dirs = ensure_session_dirs(session_id)
             heygen_data = generate_all_commentary_segments(
@@ -1092,14 +1112,18 @@ async def gen_heygen(
             _save_session(session_id)
             jobs[job_id]["result"] = heygen_data
             jobs[job_id]["status"] = "completed"
-            q.put({"type": "done", "data": heygen_data})
+            te = {"type": "done", "data": heygen_data}
+            jobs[job_id]["terminal_event"] = te
+            q.put(te)
         except Exception as e:
             jobs[job_id]["status"] = "failed"
             jobs[job_id]["error"] = str(e)
             session["last_error"] = str(e)
             session["last_error_step"] = "heygen"
             _save_session(session_id)
-            q.put({"type": "error", "message": str(e)})
+            te = {"type": "error", "message": str(e)}
+            jobs[job_id]["terminal_event"] = te
+            q.put(te)
 
     executor.submit(_run)
     return {"job_id": job_id}
@@ -1123,7 +1147,7 @@ async def gen_heygen_browser(
         return running
 
     job_id = str(uuid.uuid4())[:8]
-    jobs[job_id] = {"status": "running", "queue": Queue(), "result": None, "error": None}
+    jobs[job_id] = {"status": "running", "queue": Queue(), "result": None, "error": None, "msg_count": 0, "terminal_event": None}
     _session_jobs[session_id] = job_id
 
     def _run():
@@ -1134,6 +1158,7 @@ async def gen_heygen_browser(
                 if pct is not None:
                     event["pct"] = pct
                 q.put(event)
+                jobs[job_id]["msg_count"] += 1
 
             def on_seg_complete(interim_data, seg_result):
                 session["heygen_data"] = interim_data
@@ -1162,14 +1187,18 @@ async def gen_heygen_browser(
             _save_session(session_id)
             jobs[job_id]["result"] = heygen_data
             jobs[job_id]["status"] = "completed"
-            q.put({"type": "done", "data": heygen_data})
+            te = {"type": "done", "data": heygen_data}
+            jobs[job_id]["terminal_event"] = te
+            q.put(te)
         except Exception as e:
             jobs[job_id]["status"] = "failed"
             jobs[job_id]["error"] = str(e)
             session["last_error"] = str(e)
             session["last_error_step"] = "heygen_browser"
             _save_session(session_id)
-            q.put({"type": "error", "message": str(e)})
+            te = {"type": "error", "message": str(e)}
+            jobs[job_id]["terminal_event"] = te
+            q.put(te)
 
     executor.submit(_run)
     return {"job_id": job_id}
@@ -1185,7 +1214,7 @@ async def batch_process(
     """Run the full pipeline for a single URL (used by batch queue).
     Auto-selects 'balanced' stance. Returns job_id for SSE streaming."""
     job_id = str(uuid.uuid4())[:8]
-    jobs[job_id] = {"status": "running", "queue": Queue(), "result": None, "error": None}
+    jobs[job_id] = {"status": "running", "queue": Queue(), "result": None, "error": None, "msg_count": 0, "terminal_event": None}
 
     def _run():
         q = jobs[job_id]["queue"]
@@ -1195,6 +1224,7 @@ async def batch_process(
                 if pct is not None:
                     event["pct"] = pct
                 q.put(event)
+                jobs[job_id]["msg_count"] += 1
 
             # Run full pipeline with balanced stance, optional tone preset
             result = run_pipeline(
@@ -1206,15 +1236,21 @@ async def batch_process(
             if result:
                 jobs[job_id]["result"] = result
                 jobs[job_id]["status"] = "completed"
-                q.put({"type": "done", "video": os.path.basename(result)})
+                te = {"type": "done", "video": os.path.basename(result)}
+                jobs[job_id]["terminal_event"] = te
+                q.put(te)
             else:
                 jobs[job_id]["status"] = "failed"
                 jobs[job_id]["error"] = "Pipeline failed"
-                q.put({"type": "error", "message": "Pipeline failed"})
+                te = {"type": "error", "message": "Pipeline failed"}
+                jobs[job_id]["terminal_event"] = te
+                q.put(te)
         except Exception as e:
             jobs[job_id]["status"] = "failed"
             jobs[job_id]["error"] = str(e)
-            q.put({"type": "error", "message": str(e)})
+            te = {"type": "error", "message": str(e)}
+            jobs[job_id]["terminal_event"] = te
+            q.put(te)
 
     executor.submit(_run)
     return {"job_id": job_id}
@@ -1230,6 +1266,12 @@ async def stream_progress(job_id: str):
         return {"error": "Job not found"}
 
     async def event_generator():
+        # If job already finished, replay the terminal event immediately
+        te = job.get("terminal_event")
+        if te:
+            yield f"data: {json.dumps(te)}\n\n"
+            return
+
         q = job["queue"]
         while True:
             try:
@@ -1238,9 +1280,12 @@ async def stream_progress(job_id: str):
                 if event.get("type") in ("done", "error"):
                     break
             except Empty:
-                yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
-                if job["status"] in ("completed", "failed"):
+                # Check if job finished but "done" was consumed by a previous client
+                te = job.get("terminal_event")
+                if te:
+                    yield f"data: {json.dumps(te)}\n\n"
                     break
+                yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
             await asyncio.sleep(0.1)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
@@ -1265,10 +1310,11 @@ async def session_active_job(session_id: str):
     if job_id:
         job = jobs.get(job_id)
         if job and job["status"] == "running":
-            return {"job_id": job_id, "status": "running"}
+            return {"job_id": job_id, "status": "running", "msg_count": job.get("msg_count", 0)}
         elif job:
             return {"job_id": job_id, "status": job["status"],
-                    "result": job.get("result"), "error": job.get("error")}
+                    "result": job.get("result"), "error": job.get("error"),
+                    "msg_count": job.get("msg_count", 0)}
     return {"status": "none"}
 
 
