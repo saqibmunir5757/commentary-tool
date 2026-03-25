@@ -1087,11 +1087,17 @@ def generate_all_segments_browser_sync(
         return {"heygen_segments": [], "total": 0, "successful": 0, "failed": 0}
 
     # Determine which segments already succeeded and which need (re)processing
+    # Also detect if script text changed — if so, regenerate that segment
+    current_text = {s["segment_id"]: s.get("vo_text", "") for s in vo_segments}
     already_done = {}
     if existing_heygen_data:
         for hs in existing_heygen_data.get("heygen_segments", []):
-            if hs.get("success") and hs.get("heygen_video_path") and os.path.exists(hs["heygen_video_path"]):
-                already_done[hs["segment_id"]] = hs
+            sid = hs["segment_id"]
+            if (hs.get("success") and hs.get("heygen_video_path") and os.path.exists(hs["heygen_video_path"])
+                    and hs.get("vo_text", "") == current_text.get(sid, "")):
+                already_done[sid] = hs
+            elif hs.get("success") and hs.get("vo_text", "") != current_text.get(sid, ""):
+                progress(f"Script text changed for segment {sid} — will regenerate")
 
     segments_to_process = [s for s in vo_segments if s["segment_id"] not in already_done]
 
