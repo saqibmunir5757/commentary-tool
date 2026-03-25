@@ -615,6 +615,7 @@ def _generate_and_download(page, output_path, progress=None):
     poll_interval = 10  # check every 10 seconds
     elapsed = 180  # account for the 3-min wait
     download_success = False
+    title_never_found = 0  # consecutive checks where title wasn't on the page
 
     while elapsed < max_wait:
         # Refresh the projects page
@@ -653,11 +654,18 @@ def _generate_and_download(page, output_path, progress=None):
 
             title_el = page.locator(f'text="{unique_title}"').first
             if not title_el.is_visible(timeout=3000):
+                title_never_found += 1
+                if title_never_found >= 2:
+                    if progress:
+                        progress(f"ERROR: Video '{unique_title}' not found on projects page. "
+                                 f"It may have been deleted from HeyGen.")
+                    return None, None
                 if progress:
-                    progress(f"  Video '{unique_title}' not found yet...")
+                    progress(f"  Video '{unique_title}' not found, retrying once more...")
                 page.wait_for_timeout(poll_interval * 1000)
                 elapsed += poll_interval
                 continue
+            title_never_found = 0  # reset — title is visible
 
             # Force-show hidden overlay buttons (hover-only elements) for headless mode
             page.evaluate("""() => {
