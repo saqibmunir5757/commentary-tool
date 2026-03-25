@@ -3711,6 +3711,26 @@
             btn.innerHTML = '<span class="spinner"></span> Generating Avatar...';
             document.querySelectorAll('[id^="scriptWarn_"]').forEach(w => w.style.display = 'none');
 
+            // Sync any edited script text to backend before generating
+            if (currentScript) {
+                let scriptChanged = false;
+                for (const seg of currentScript.segments) {
+                    if (seg.type.endsWith('_voiceover')) {
+                        const el = document.getElementById(`vo_text_${seg.segment_id}`);
+                        if (el && el.value !== seg.vo_text) {
+                            seg.vo_text = el.value;
+                            scriptChanged = true;
+                        }
+                    }
+                }
+                if (scriptChanged) {
+                    const sf = new FormData();
+                    sf.append('session_id', sessionId);
+                    sf.append('script_json', JSON.stringify(currentScript));
+                    await fetch('/update-script', { method: 'POST', body: sf });
+                }
+            }
+
             const progressDiv = document.getElementById('heygenBrowserProgress');
             const segmentsDiv = document.getElementById('heygenBrowserSegments');
             const hgBar = document.getElementById('heygenBrowserBar');
