@@ -1254,11 +1254,6 @@
             </div>
             <div id="scriptStats" class="script-stats"></div>
             <div id="hookVariantsPanel" class="hidden" style="margin-bottom: 16px;"></div>
-            <div id="scriptEditWarning" style="display:none;align-items:center;gap:10px;padding:10px 14px;margin-bottom:12px;background:#2a2a1a;border:1px solid #5a5a2a;border-radius:8px;color:#f0c040;font-size:13px;">
-                <span style="font-size:16px;">&#9888;</span>
-                <span>You've edited the script. Avatar videos will need to be <strong>fully regenerated</strong> for all segments.</span>
-                <button onclick="this.parentElement.style.display='none'" style="margin-left:auto;background:none;border:none;color:#888;cursor:pointer;font-size:16px;">&times;</button>
-            </div>
             <div id="scriptTimeline"></div>
 
             <!-- Outro CTA -->
@@ -2786,6 +2781,7 @@
                     div.innerHTML = `
                         <div class="segment-type ${typeClass}">${typeLabel} &middot; ~${seg.estimated_duration_sec || Math.round(words / 2.5)}s &middot; ${words} words</div>
                         <textarea id="vo_text_${seg.segment_id}" rows="3">${seg.vo_text || ''}</textarea>
+                        <div id="scriptWarn_${seg.segment_id}" style="display:none;align-items:center;gap:6px;padding:6px 10px;margin:4px 0 6px;background:#2a2a1a;border:1px solid #5a5a2a;border-radius:6px;color:#f0c040;font-size:12px;">&#9888; Editing this will regenerate avatars for all segments.</div>
                         ${seg.supporting_facts ? `<p class="text-sm mt-8">Facts: ${seg.supporting_facts.join('; ')}</p>` : ''}
                         <div class="segment-actions">
                             <input type="text" class="regen-input" id="regen_inst_${seg.segment_id}" placeholder="Instructions (e.g. make it more aggressive, add humor...)" />
@@ -2811,9 +2807,10 @@
 
             // Warn when editing script if avatars already generated
             timeline.querySelectorAll('textarea[id^="vo_text_"]').forEach(ta => {
+                const segId = ta.id.replace('vo_text_', '');
                 ta.addEventListener('input', () => {
                     if (avatarsGenerated) {
-                        const warn = document.getElementById('scriptEditWarning');
+                        const warn = document.getElementById('scriptWarn_' + segId);
                         if (warn) warn.style.display = 'flex';
                     }
                 }, { once: true });
@@ -3711,8 +3708,7 @@
             const btn = document.getElementById('btnHeyGenBrowser');
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner"></span> Generating Avatar...';
-            const warn = document.getElementById('scriptEditWarning');
-            if (warn) warn.style.display = 'none';
+            document.querySelectorAll('[id^="scriptWarn_"]').forEach(w => w.style.display = 'none');
 
             const progressDiv = document.getElementById('heygenBrowserProgress');
             const segmentsDiv = document.getElementById('heygenBrowserSegments');
