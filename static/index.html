@@ -2808,12 +2808,13 @@
             // Warn when editing script if avatars already generated
             timeline.querySelectorAll('textarea[id^="vo_text_"]').forEach(ta => {
                 const segId = ta.id.replace('vo_text_', '');
+                const originalText = ta.value.trim();
                 ta.addEventListener('input', () => {
-                    if (avatarsGenerated) {
-                        const warn = document.getElementById('scriptWarn_' + segId);
-                        if (warn) warn.style.display = 'flex';
-                    }
-                }, { once: true });
+                    if (!avatarsGenerated) return;
+                    const warn = document.getElementById('scriptWarn_' + segId);
+                    if (!warn) return;
+                    warn.style.display = ta.value.trim() !== originalText ? 'flex' : 'none';
+                });
             });
         }
 
