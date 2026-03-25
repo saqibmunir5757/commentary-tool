@@ -77,6 +77,29 @@
             text-decoration: none;
             transition: all 0.2s;
         }
+        .btn-script {
+            background: #1a2030;
+            color: #4fc3f7;
+            border: 1px solid #1e2a3a;
+            cursor: pointer;
+        }
+        .btn-script:hover { background: #1e2a3a; }
+        .script-text-block {
+            display: none;
+            margin-top: 10px;
+            padding: 12px;
+            background: #0a0e14;
+            border: 1px solid #1e2a3a;
+            border-radius: 6px;
+            font-size: 12px;
+            line-height: 1.6;
+            color: #8a9bb0;
+            max-height: 200px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            font-family: 'SF Mono', Monaco, monospace;
+        }
+        .script-text-block.open { display: block; }
         .btn-dl {
             background: #1e3a2a;
             color: #4caf50;
@@ -180,6 +203,7 @@
                         card.onclick = () => { window.location.href = '/script'; };
                     } else {
                         const videoUrl = `/download-script-video/${v.filename}`;
+                        const cardId = 'card_' + i;
                         card.innerHTML = `
                             <video controls preload="metadata" src="${videoUrl}"></video>
                             <div class="info">
@@ -187,7 +211,9 @@
                                 <div class="meta">${v.size_mb} MB &middot; ${v.created}</div>
                                 <div class="actions">
                                     <a class="btn-dl" href="${videoUrl}" download>Download</a>
+                                    ${v.script_text ? `<a class="btn-dl btn-script" onclick="toggleScript('${cardId}')">See Script</a>` : ''}
                                 </div>
+                                ${v.script_text ? `<div class="script-text-block" id="${cardId}_script">${v.script_text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>` : ''}
                             </div>
                         `;
                     }
@@ -197,6 +223,11 @@
                 document.getElementById('emptyState').style.display = 'block';
                 document.getElementById('emptyState').textContent = 'Failed to load videos.';
             }
+        }
+
+        function toggleScript(cardId) {
+            const el = document.getElementById(cardId + '_script');
+            if (el) el.classList.toggle('open');
         }
 
         loadVideos();

@@ -258,6 +258,7 @@ async def gen_script_video(script_text: str = Form(...)):
         "job_id": job_id,
         "status": "running",
         "script_preview": script_text.strip()[:200],
+        "script_text": script_text.strip(),
         "created_at": time.time(),
     })
 
@@ -285,10 +286,13 @@ async def gen_script_video(script_text: str = Form(...)):
 
                 jobs[job_id]["result"] = result
                 jobs[job_id]["status"] = "completed"
+                prev = _load_script_job(job_id) or {}
                 _save_script_job(job_id, {
                     "job_id": job_id, "status": "completed",
                     "video_filename": filename,
-                    "created_at": _load_script_job(job_id).get("created_at"),
+                    "script_preview": prev.get("script_preview", ""),
+                    "script_text": prev.get("script_text", ""),
+                    "created_at": prev.get("created_at"),
                     "completed_at": time.time(),
                 })
                 q.put({"type": "done", "video_path": serve_path, "video_filename": filename})
@@ -296,18 +300,24 @@ async def gen_script_video(script_text: str = Form(...)):
                 err = result.get("error", "Unknown error")
                 jobs[job_id]["status"] = "failed"
                 jobs[job_id]["error"] = err
+                prev = _load_script_job(job_id) or {}
                 _save_script_job(job_id, {
                     "job_id": job_id, "status": "failed", "error": err,
-                    "created_at": _load_script_job(job_id).get("created_at"),
+                    "script_preview": prev.get("script_preview", ""),
+                    "script_text": prev.get("script_text", ""),
+                    "created_at": prev.get("created_at"),
                     "completed_at": time.time(),
                 })
                 q.put({"type": "error", "message": err})
         except Exception as e:
             jobs[job_id]["status"] = "failed"
             jobs[job_id]["error"] = str(e)
+            prev = _load_script_job(job_id) or {}
             _save_script_job(job_id, {
                 "job_id": job_id, "status": "failed", "error": str(e),
-                "created_at": (_load_script_job(job_id) or {}).get("created_at"),
+                "script_preview": prev.get("script_preview", ""),
+                "script_text": prev.get("script_text", ""),
+                "created_at": prev.get("created_at"),
                 "completed_at": time.time(),
             })
             q.put({"type": "error", "message": str(e)})
@@ -332,6 +342,21 @@ async def script_history_page():
 @app.get("/script-video-list")
 async def script_video_list():
     """List all generated script videos + running jobs with metadata."""
+    # Build lookup: video_filename -> script_text from job JSONs
+    script_lookup = {}
+    if os.path.exists(SCRIPT_JOBS_DIR):
+        for fname in os.listdir(SCRIPT_JOBS_DIR):
+            if not fname.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(SCRIPT_JOBS_DIR, fname)) as f:
+                    data = json.load(f)
+                vf = data.get("video_filename")
+                if vf and data.get("script_text"):
+                    script_lookup[vf] = data["script_text"]
+            except Exception:
+                continue
+
     videos = []
     # Completed videos from disk
     if os.path.exists(SCRIPT_VIDEO_DIR):
@@ -344,6 +369,7 @@ async def script_video_list():
                     "status": "completed",
                     "size_mb": round(stat.st_size / (1024 * 1024), 1),
                     "created": time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime)),
+                    "script_text": script_lookup.get(f, ""),
                 })
     # Running jobs from disk metadata
     if os.path.exists(SCRIPT_JOBS_DIR):

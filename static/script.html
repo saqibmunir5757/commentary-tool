@@ -55,6 +55,7 @@
             transition: border-color 0.2s;
         }
         textarea:focus { border-color: #4fc3f7; }
+        textarea:disabled { opacity: 0.5; cursor: not-allowed; background: #0a0e14; }
         textarea::placeholder { color: #3a4a5c; }
         .char-count {
             text-align: right;
@@ -266,18 +267,28 @@
             return { close: () => { retries = maxRetries; if (es) es.close(); } };
         }
 
-        // ── Show result video ──
-        function showResult(filename) {
-            const videoUrl = `/download-script-video/${filename}`;
-            document.getElementById('videoPreview').src = videoUrl;
-            document.getElementById('downloadLink').href = videoUrl;
-            document.getElementById('resultSection').classList.remove('hidden');
-            document.getElementById('progressSection').classList.remove('hidden');
-            document.getElementById('progressFill').style.width = '100%';
-            document.getElementById('statusText').textContent = 'Video generated successfully!';
+        // ── Reset to fresh state ──
+        function resetToFresh() {
+            scriptInput.disabled = false;
+            scriptInput.value = '';
+            charCount.textContent = '0';
+            document.getElementById('progressSection').classList.add('hidden');
+            document.getElementById('resultSection').classList.add('hidden');
+            document.getElementById('errorMsg').classList.add('hidden');
             document.getElementById('closeTabBanner').style.display = 'none';
             document.getElementById('generateBtn').disabled = false;
-            document.getElementById('generateBtn').textContent = 'Generate Again';
+            document.getElementById('generateBtn').textContent = 'Generate Avatar Video';
+            localStorage.removeItem('active_script_job_id');
+            localStorage.removeItem('active_script_text');
+        }
+
+        // ── Show greyed script text during processing ──
+        function showScriptReference(text) {
+            if (text) {
+                scriptInput.value = text;
+                charCount.textContent = text.length;
+            }
+            scriptInput.disabled = true;
         }
 
         // ── Show error message ──
@@ -290,14 +301,24 @@
             document.getElementById('closeTabBanner').style.display = 'none';
             document.getElementById('generateBtn').disabled = false;
             document.getElementById('generateBtn').textContent = 'Retry';
+            scriptInput.disabled = false;
         }
 
         // ── Stream a running job ──
-        function streamJob(jobId) {
+        function streamJob(jobId, scriptText) {
             const progressSection = document.getElementById('progressSection');
             const progressFill = document.getElementById('progressFill');
             const statusText = document.getElementById('statusText');
             const btn = document.getElementById('generateBtn');
+
+            // Show script text as greyed reference
+            if (scriptText) {
+                showScriptReference(scriptText);
+            } else {
+                // Try localStorage fallback
+                const saved = localStorage.getItem('active_script_text');
+                if (saved) showScriptReference(saved);
+            }
 
             progressSection.classList.remove('hidden');
             progressFill.style.width = '5%';
@@ -317,22 +338,33 @@
                         progressFill.style.width = Math.min(5 + Math.round(msgCount * 2), 90) + '%';
                         statusText.textContent = 'Generating avatar video...';
                     } else if (event.type === 'done') {
-                        if (event.video_path) {
-                            showResult(event.video_path.split('/').pop());
-                        } else if (event.video_filename) {
-                            showResult(event.video_filename);
-                        }
+                        progressFill.style.width = '100%';
+                        statusText.textContent = 'Video generated! Check History page.';
+                        document.getElementById('closeTabBanner').style.display = 'none';
+                        btn.disabled = false;
+                        btn.textContent = 'Generate New Video';
+                        scriptInput.disabled = false;
+                        scriptInput.value = '';
+                        charCount.textContent = '0';
                         localStorage.removeItem('active_script_job_id');
+                        localStorage.removeItem('active_script_text');
                     } else if (event.type === 'error') {
                         showError(event.message);
                         localStorage.removeItem('active_script_job_id');
+                        localStorage.removeItem('active_script_text');
                     }
                 },
                 onError: () => {
-                    // All retries exhausted — check job status from server
                     fetch(`/script-job/${jobId}`).then(r => r.json()).then(job => {
-                        if (job.status === 'completed' && job.video_filename) {
-                            showResult(job.video_filename);
+                        if (job.status === 'completed') {
+                            progressFill.style.width = '100%';
+                            statusText.textContent = 'Video generated! Check History page.';
+                            document.getElementById('closeTabBanner').style.display = 'none';
+                            btn.disabled = false;
+                            btn.textContent = 'Generate New Video';
+                            scriptInput.disabled = false;
+                            scriptInput.value = '';
+                            charCount.textContent = '0';
                         } else if (job.status === 'failed') {
                             showError(job.error || 'Generation failed.');
                         } else {
@@ -342,6 +374,7 @@
                         showError('Connection lost. Check the History page for results.');
                     });
                     localStorage.removeItem('active_script_job_id');
+                    localStorage.removeItem('active_script_text');
                 },
             });
         }
@@ -371,7 +404,8 @@
                 }
 
                 localStorage.setItem('active_script_job_id', data.job_id);
-                streamJob(data.job_id);
+                localStorage.setItem('active_script_text', text);
+                streamJob(data.job_id, text);
 
             } catch (err) {
                 showError('Request failed: ' + err.message);
@@ -381,37 +415,29 @@
 
         // ── Init: recover state on page load ──
         async function init() {
-            // Check localStorage for an active job
             const savedJobId = localStorage.getItem('active_script_job_id');
             if (savedJobId) {
                 try {
                     const res = await fetch(`/script-job/${savedJobId}`);
                     const job = await res.json();
-                    if (job.status === 'completed' && job.video_filename) {
-                        showResult(job.video_filename);
-                        localStorage.removeItem('active_script_job_id');
-                        return;
-                    } else if (job.status === 'running') {
-                        streamJob(savedJobId);
-                        return;
-                    } else if (job.status === 'failed') {
-                        showError(job.error || 'Generation failed.');
-                        localStorage.removeItem('active_script_job_id');
+                    if (job.status === 'running') {
+                        // Reconnect — restore script text from localStorage or server
+                        const scriptText = localStorage.getItem('active_script_text') || job.script_text || '';
+                        streamJob(savedJobId, scriptText);
                         return;
                     }
+                    // Completed or failed — clear and show fresh form
                 } catch (_) {}
-                localStorage.removeItem('active_script_job_id');
+                resetToFresh();
                 return;
             }
-            // No saved job — check if there's a recent completed job
+            // No saved job — only reconnect if latest is still running
             try {
                 const res = await fetch('/script-job/latest');
                 const job = await res.json();
                 if (job.status === 'running' && job.job_id) {
                     localStorage.setItem('active_script_job_id', job.job_id);
-                    streamJob(job.job_id);
-                } else if (job.status === 'completed' && job.video_filename) {
-                    showResult(job.video_filename);
+                    streamJob(job.job_id, job.script_text || '');
                 }
             } catch (_) {}
         }
