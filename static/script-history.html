@@ -187,7 +187,8 @@
                     return;
                 }
 
-                for (const v of data.videos) {
+                for (let i = 0; i < data.videos.length; i++) {
+                    const v = data.videos[i];
                     const card = document.createElement('div');
                     card.className = 'video-card';
 
@@ -213,11 +214,15 @@
                                     <a class="btn-dl" href="${videoUrl}" download>Download</a>
                                     ${v.script_text ? `<a class="btn-dl btn-script" onclick="toggleScript('${cardId}')">See Script</a>` : ''}
                                 </div>
-                                ${v.script_text ? `<div class="script-text-block" id="${cardId}_script">${v.script_text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>` : ''}
+                                ${v.script_text ? `<div class="script-text-block" id="${cardId}_script"></div>` : ''}
                             </div>
                         `;
                     }
                     grid.appendChild(card);
+                    // Set script text safely via textContent (avoids XSS / HTML parsing issues)
+                    if (v.script_text && card.querySelector('.script-text-block')) {
+                        card.querySelector('.script-text-block').textContent = v.script_text;
+                    }
                 }
             } catch (e) {
                 document.getElementById('emptyState').style.display = 'block';
